@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import PaymentKind, PaymentStatus
-from app.db.repositories import PaymentRepository
+from app.db.repositories import PaymentRepository, UserRepository
 from app.services.payment_effects import apply_paid_payment_effects
 
 logger = logging.getLogger(__name__)
@@ -170,3 +171,86 @@ async def try_finalize_telegram_invoice_payment(
             total_amount_minor=total_amount_minor,
             currency=currency,
         )
+
+
+async def finalize_subscription_month_invoice_via_telegram(
+    *,
+    session_factory: async_sessionmaker,
+    subscription_price_rub: int,
+    telegram_user_id: int,
+    telegram_username: str | None,
+    telegram_payment_charge_id: str,
+    provider_payment_charge_id: str | None,
+    total_amount_minor: int,
+    currency: str,
+) -> tuple[dict[str, Any] | None, int | None, bool]:
+    """
+    Цепочка как в эталонном боте: фиксированный invoice_payload + проверка суммы в pre-checkout/successful.
+    Отдельно от платежей «документ» (tgpd:), здесь строка PAYMENT создаётся при приходе successful_payment.
+    """
+    tg_charge = telegram_payment_charge_id.strip()
+    if not tg_charge:
+        logger.warning("Telegram подписка: пустой telegram_payment_charge_id")
+        return None, None, False
+
+    cur = (currency or "").strip().upper()
+    if cur != "RUB":
+        logger.warning(
+            "Telegram подписка: неверная валюта %s user=%s", cur, telegram_user_id
+        )
+        return None, None, False
+
+    try:
+        expected_minor = rub_amount_to_telegram_minor_units(subscription_price_rub)
+    except TelegramInvoiceAmountTooLowError:
+        return None, None, False
+
+    if int(total_amount_minor) != expected_minor:
+        logger.warning(
+            "Telegram подписка: сумма minor=%s != ожид. %s user=%s",
+            total_amount_minor,
+            expected_minor,
+            telegram_user_id,
+        )
+        return None, None, False
+
+    async with session_factory() as session:
+        pays = PaymentRepository(session)
+        users = UserRepository(session)
+
+        dup = await pays.by_telegram_charge_id(tg_charge)
+        if dup is not None:
+            k = dup.payment_kind or PaymentKind.DOCUMENT.value
+            if k != PaymentKind.SUBSCRIPTION.value:
+                logger.warning(
+                    "Telegram подписка: charge_id уже занят другим типом pay_id=%s", dup.id
+                )
+                return None, None, False
+            meta = dup.payment_meta or {}
+            return meta, dup.id, False
+
+        user = await users.get_or_create(telegram_user_id, telegram_username)
+        meta: dict[str, Any] = {
+            "telegram_user_id": telegram_user_id,
+            "payment_purpose": PaymentKind.SUBSCRIPTION.value,
+        }
+        payment = await pays.create(
+            user_id=user.id,
+            document_id=None,
+            amount=subscription_price_rub,
+            payment_kind=PaymentKind.SUBSCRIPTION,
+            status=PaymentStatus.PENDING,
+            payment_meta=meta,
+            idempotency_key=str(uuid.uuid4()),
+        )
+        payment.telegram_payment_charge_id = tg_charge
+        prov = provider_payment_charge_id.strip() if provider_payment_charge_id else ""
+        payment.provider_payment_charge_id = prov or None
+
+        pays.mark_paid(payment)
+        await apply_paid_payment_effects(session, payment)
+        pid = payment.id
+        meta_out = payment.payment_meta or meta
+        await session.commit()
+
+    return meta_out, pid, True

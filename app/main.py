@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -20,7 +21,13 @@ from app.services.payments import PaymentService
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    log_level_name = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logger = logging.getLogger(__name__)
     settings = get_settings()
     settings.validate_runtime()
@@ -32,6 +39,13 @@ async def main() -> None:
                 "и пара YOOKASSA_SHOP_ID + YOOKASSA_SECRET_KEY. Платежи не заработают. "
                 "Проверьте .env в каталоге WorkingDirectory systemd (одна строка, без кавычек вокруг значения "
                 "и без пробелов вокруг знака '='), сохраните и сделайте restart сервиса."
+            )
+        elif settings.telegram_native_payment_token_configured() and int(settings.yookassa_tax_system_code or 0) <= 0:
+            logger.warning(
+                "ЮKassa через Telegram-счёт: YOOKASSA_TAX_SYSTEM_CODE=0 или не задан — в sendInvoice не отправляется "
+                "provider_data с receipt (чек по 54‑ФЗ). Если в профиле магазина включены чеки ЮKassa, типичное "
+                "сообщение у пользователя после pre-checkout — «Не удалось провести операцию». Задайте код СНО (1–6), "
+                "как для рабочего эталона, и YOOKASSA_VAT_CODE."
             )
 
     catalog = TemplateCatalog(settings.templates_dir).load()

@@ -13,7 +13,7 @@
 Цепочка в боте (как в документации):
 
 1. **Бот отправляет счёт** (`send_invoice` / `answer_invoice` в aiogram): `currency="RUB"`, `provider_token` из BotFather, `payload` короткая строка, `prices`.
-2. **Пользователь нажимает «Оплатить»** → Telegram шлёт боту **`pre_checkout_query`**. Бот обязан ответить `answerPreCheckoutQuery(ok=True)` (у нас после проверки суммы и пользователя из БД).
+2. **Пользователь нажимает «Оплатить»** → Telegram шлёт боту **`pre_checkout_query`**. Бот отвечает `answerPreCheckoutQuery(ok=True)` после проверки: для подписки — **валюта RUB и сумма = `SUBSCRIPTION_PRICE_RUB`**, без БД (как эталон); для документа — соответствие строки платежа в БД пользователю и сумме.
 3. После успешной оплаты клиент Telegram присылает **`successful_payment`**; бот фиксирует `paid` в таблице `payments` и открывает документ / продлевает подписку.
 
 Частые причины фразы **«Не удалось провести транзакцию … на стороне платёжной системы»** (уже после шага счёта / у провайдера):
@@ -24,6 +24,7 @@
 | Магазин или договор в ЮKassa в статусе, при котором нельзя принять канал Telegram. |
 | Сумма **ниже телеграмовского минимума для RUB** или не те минорные единицы. |
 | Копировать токен из BotFather **целиком** (одна строка в `.env` без пробелов вокруг `=`). После каждого изменения `.env` — перезапуск процесса бота (`systemctl restart …`). |
+| В кабинете ЮKassa включены **чеки (54‑ФЗ)**, а в `.env` оставили **`YOOKASSA_TAX_SYSTEM_CODE=0`** — счёт без `provider_data.receipt`; часто платёж режется уже у провайдера. |
 
 Переменные окружения в этом проекте:
 
@@ -33,5 +34,6 @@
 - **`YOOKASSA_TAX_SYSTEM_CODE`** — если не `0`, в счёт добавляется JSON **`provider_data`** с блоком **`receipt`** для фискализации (54‑ФЗ), как принято в связке Telegram + ЮKassa. Код системы налогообложения — значения из [документации ЮKassa](https://yookassa.ru/developers/payment-acceptance/receipts/54fz/yoomoney/other-services/parameters#codessistem-nalogooblozheniya).
 - **`YOOKASSA_VAT_CODE`** — номер ставки НДС для позиции в чеке (список `vat_code` в API receipt).
 - При нативном счёте в Telegram счёт отправляется **как в рабочем эталоне ЮKassa**: всегда запрашиваются **email и телефон** и передаются провайдеру (`need_email` / `need_phone_number`).
+- Оплата **подписки**: фиксированный `invoice_payload` и проверка суммы только по **`SUBSCRIPTION_PRICE_RUB`** (как во вложенном эталоне; запись об оплате в БД появляется после `successful_payment`).
 
 Сценарий **только браузера (ЮKassa redirect)** задаётся отдельно: **`YOOKASSA_SHOP_ID`**, **`YOOKASSA_SECRET_KEY`**, **`YOOKASSA_RETURN_URL`**, webhook — см. `.env.example` и код `YooKassaClient`.

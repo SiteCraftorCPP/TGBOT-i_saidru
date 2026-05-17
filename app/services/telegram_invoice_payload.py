@@ -7,13 +7,16 @@ from app.db.models import PaymentKind
 TG_DOC_PAYLOAD_PREFIX = "tgpd"
 TG_SUB_PAYLOAD_PREFIX = "tgps"
 
+SUBSCRIPTION_MONTH_INVOICE_PAYLOAD = "my1documents_sub_month_v1"
+
+
+def is_subscription_month_invoice_payload(payload: str) -> bool:
+    """Подписка в Telegram счёте без id строки БД — как эталон (pre-checkout только payload + сумма)."""
+    return (payload or "").strip() == SUBSCRIPTION_MONTH_INVOICE_PAYLOAD
+
 
 def encode_document_payment_payload(payment_id: int) -> str:
     return f"{TG_DOC_PAYLOAD_PREFIX}:{int(payment_id)}"
-
-
-def encode_subscription_payment_payload(payment_id: int) -> str:
-    return f"{TG_SUB_PAYLOAD_PREFIX}:{int(payment_id)}"
 
 
 def parse_telegram_invoice_payload(payload: str) -> tuple[str, int] | None:

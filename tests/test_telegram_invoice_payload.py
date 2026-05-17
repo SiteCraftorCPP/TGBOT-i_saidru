@@ -7,7 +7,17 @@ from app.services.telegram_invoice_finalize import (
     enforce_telegram_rub_invoice_minimum,
     rub_amount_to_telegram_minor_units,
 )
-from app.services.telegram_invoice_payload import encode_document_payment_payload, parse_telegram_invoice_payload
+from app.services.telegram_invoice_payload import (
+    SUBSCRIPTION_MONTH_INVOICE_PAYLOAD,
+    encode_document_payment_payload,
+    is_subscription_month_invoice_payload,
+    parse_telegram_invoice_payload,
+)
+
+
+def test_subscription_invoice_payload_constant() -> None:
+    assert is_subscription_month_invoice_payload(SUBSCRIPTION_MONTH_INVOICE_PAYLOAD)
+    assert is_subscription_month_invoice_payload(" " + SUBSCRIPTION_MONTH_INVOICE_PAYLOAD + " ")
 
 
 def test_invoice_payload_document_roundtrip() -> None:

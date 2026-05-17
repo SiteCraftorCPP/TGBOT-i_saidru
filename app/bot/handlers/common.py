@@ -31,7 +31,6 @@ from app.services.payments import (
     PAYMENTS_CONFIGURE_HELP_TEXT,
     PAYMENTS_DISABLED_ADMIN_DIAGNOSTIC,
     PAYMENTS_TURNED_OFF_USER_MESSAGE,
-    create_pending_subscription_payment,
     create_yookassa_subscription_payment,
 )
 
@@ -150,11 +149,9 @@ async def subscribe_pay_month_handler(
                 return
 
             if tg_native:
-                pay = await create_pending_subscription_payment(pays, user, settings)
                 await session.commit()
                 await callback.message.answer_invoice(
                     **telegram_subscription_invoice_kw(
-                        payment_row_id=pay.id,
                         price_rub=settings.subscription_price_rub,
                         provider_token=settings.telegram_payment_provider_token,
                         settings=settings,

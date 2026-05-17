@@ -196,6 +196,13 @@ class PaymentRepository:
         r = await self.session.execute(select(Payment).where(Payment.provider_payment_charge_id == provider_id))
         return r.scalar_one_or_none()
 
+    async def by_telegram_charge_id(self, charge_id: str) -> Payment | None:
+        c = (charge_id or "").strip()
+        if not c:
+            return None
+        r = await self.session.execute(select(Payment).where(Payment.telegram_payment_charge_id == c))
+        return r.scalar_one_or_none()
+
     def mark_paid(self, payment: Payment) -> None:
         payment.status = PaymentStatus.PAID.value
 
