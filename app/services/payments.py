@@ -19,6 +19,12 @@ PAYMENTS_CONFIGURE_HELP_TEXT = (
 )
 
 
+PAYMENTS_TURNED_OFF_USER_MESSAGE = (
+    "Платное оформление документов сейчас недоступно. "
+    "Если нужна помощь — напишите администратору."
+)
+
+
 class PaymentService:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -33,10 +39,13 @@ class PaymentService:
         return until > datetime.now(timezone.utc)
 
     def is_usage_unlimited(self, user: User) -> bool:
-        """Администраторы (ADMIN_IDS) и пользователи с активной подпиской — без отдельной оплаты за документ."""
+        """
+        По умолчанию без отдельной оплаты за документ — только ADMIN_IDS.
+        Если SUBSCRIPTION_INCLUDES_UNLIMITED_DOCS=true и подписка активна по дате — тоже без отдельной оплаты.
+        """
         if self.settings.is_admin(user.telegram_id):
             return True
-        return self.subscription_active(user)
+        return bool(self.settings.subscription_includes_unlimited_docs and self.subscription_active(user))
 
     async def prepare_document_access(
         self,
@@ -51,80 +60,72 @@ class PaymentService:
         True, None, None — можно генерировать (без оплаты / уже оплачено).
         False, url или None, None — redirect ЮKassa (открыть ссылку браузере).
         False, None, payment_row_id — нативный invoice в Telegram для этой строки payments.
-        False, None, None — оплата «включена», но ни Telegram-токена, ни API ЮKassa нет (или сбой конфигурации).
+        False, None, None — нельзя продолжить: PAYMENTS_ENABLED=false или нет средств платежки.
         """
         if self.is_usage_unlimited(user):
             await documents.update_status(document, DocumentStatus.PAID)
             return True, None, None
 
-        if self.settings.payments_enabled:
-            tg_native = self.settings.telegram_native_payment_token_configured()
-            yoo = self.settings.yookassa_configured()
-            if not tg_native and not yoo:
-                return False, None, None
+        if not self.settings.payments_enabled:
+            return False, None, None
 
-            ctx = flow_context or {}
-            idem = str(uuid.uuid4())
-            db_meta: dict[str, Any] = {
-                "telegram_user_id": user.telegram_id,
-                "payment_purpose": "document",
-                "request_text": str(ctx.get("request_text", ""))[:20000],
-                "details_text": str(ctx.get("details_text", ""))[:20000],
-                "document_title": str(ctx.get("document_title", ""))[:500],
-            }
-            amount_rub = self.settings.document_price_rub
+        tg_native = self.settings.telegram_native_payment_token_configured()
+        yoo = self.settings.yookassa_configured()
+        if not tg_native and not yoo:
+            return False, None, None
 
-            pay = await payments.create(
-                user_id=document.user_id,
-                document_id=document.id,
-                amount=amount_rub,
-                payment_kind=PaymentKind.DOCUMENT,
-                status=PaymentStatus.PENDING,
-                payment_meta=db_meta,
-                idempotency_key=idem,
-            )
+        ctx = flow_context or {}
+        idem = str(uuid.uuid4())
+        db_meta: dict[str, Any] = {
+            "telegram_user_id": user.telegram_id,
+            "payment_purpose": "document",
+            "request_text": str(ctx.get("request_text", ""))[:20000],
+            "details_text": str(ctx.get("details_text", ""))[:20000],
+            "document_title": str(ctx.get("document_title", ""))[:500],
+        }
+        amount_rub = self.settings.document_price_rub
 
-            if tg_native:
-                await payments.flush()
-                return False, None, pay.id
-
-            assert yoo
-
-            yoo_meta = {
-                "payment_db_id": str(pay.id),
-                "telegram_user_id": str(user.telegram_id),
-                "purpose": PaymentKind.DOCUMENT.value,
-            }
-
-            amt_str = f"{amount_rub}.00"
-
-            try:
-                client = YooKassaClient(self.settings)
-                payment_response = await client.create_payment_redirect(
-                    amount_value=amt_str,
-                    description=f"Документ №{document.id}",
-                    metadata=yoo_meta,
-                    idempotence_key=idem,
-                )
-            except YooKassaApiError:
-                raise
-
-            pay_url = ""
-            if payment_response.confirmation and payment_response.confirmation.confirmation_url:
-                pay_url = payment_response.confirmation.confirmation_url
-            pay.provider_payment_charge_id = payment_response.id
-            await payments.flush()
-            return False, pay_url or None, None
-
-        await payments.create(
+        pay = await payments.create(
             user_id=document.user_id,
             document_id=document.id,
-            amount=self.settings.document_price_rub,
+            amount=amount_rub,
             payment_kind=PaymentKind.DOCUMENT,
-            status=PaymentStatus.BYPASSED,
+            status=PaymentStatus.PENDING,
+            payment_meta=db_meta,
+            idempotency_key=idem,
         )
-        await documents.update_status(document, DocumentStatus.PAID)
-        return True, None, None
+
+        if tg_native:
+            await payments.flush()
+            return False, None, pay.id
+
+        assert yoo
+
+        yoo_meta = {
+            "payment_db_id": str(pay.id),
+            "telegram_user_id": str(user.telegram_id),
+            "purpose": PaymentKind.DOCUMENT.value,
+        }
+
+        amt_str = f"{amount_rub}.00"
+
+        try:
+            client = YooKassaClient(self.settings)
+            payment_response = await client.create_payment_redirect(
+                amount_value=amt_str,
+                description=f"Документ №{document.id}",
+                metadata=yoo_meta,
+                idempotence_key=idem,
+            )
+        except YooKassaApiError:
+            raise
+
+        pay_url = ""
+        if payment_response.confirmation and payment_response.confirmation.confirmation_url:
+            pay_url = payment_response.confirmation.confirmation_url
+        pay.provider_payment_charge_id = payment_response.id
+        await payments.flush()
+        return False, pay_url or None, None
 
 
 async def create_pending_subscription_payment(

@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     payments_enabled: bool = Field(default=False, alias="PAYMENTS_ENABLED")
     document_price_rub: int = Field(default=100, alias="DOCUMENT_PRICE_RUB")
     subscription_price_rub: int = Field(default=499, alias="SUBSCRIPTION_PRICE_RUB")
+    subscription_includes_unlimited_docs: bool = Field(
+        default=False,
+        alias="SUBSCRIPTION_INCLUDES_UNLIMITED_DOCS",
+        description=(
+            "Если true и у пользователя активна подписка (subscription_until) — генерация документов без отдельной оплаты. "
+            "Если false — без отдельной оплаты только у ADMIN_IDS."
+        ),
+    )
 
     yookassa_shop_id: str = Field(default="", alias="YOOKASSA_SHOP_ID")
     yookassa_secret_key: str = Field(default="", alias="YOOKASSA_SECRET_KEY")

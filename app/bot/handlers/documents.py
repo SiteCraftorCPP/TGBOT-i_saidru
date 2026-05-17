@@ -32,7 +32,11 @@ from app.db.repositories import (
 from app.integrations.yookassa.client import YooKassaApiError
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.documents import DocumentGenerator
-from app.services.payments import PAYMENTS_CONFIGURE_HELP_TEXT, PaymentService
+from app.services.payments import (
+    PAYMENTS_CONFIGURE_HELP_TEXT,
+    PAYMENTS_TURNED_OFF_USER_MESSAGE,
+    PaymentService,
+)
 from app.schemas.ai import DocumentQuestionsResult
 
 router = Router()
@@ -261,7 +265,10 @@ async def handle_document_details(
                 reply_markup=yookassa_checkout_keyboard(pay_url),
             )
         else:
-            await message.answer(PAYMENTS_CONFIGURE_HELP_TEXT, parse_mode=None)
+            if not settings.payments_enabled:
+                await message.answer(PAYMENTS_TURNED_OFF_USER_MESSAGE, parse_mode=None)
+            else:
+                await message.answer(PAYMENTS_CONFIGURE_HELP_TEXT, parse_mode=None)
         return
 
     await state.set_state(DocumentStates.confirming_generation)
@@ -284,6 +291,7 @@ async def pay_done_continue(
     callback: CallbackQuery,
     state: FSMContext,
     session_factory: async_sessionmaker,
+    settings: Settings,
 ) -> None:
     raw = callback.data or ""
     parts = raw.split(":", maxsplit=1)
@@ -330,7 +338,11 @@ async def pay_done_continue(
         msg = (
             "✅ Подписка активна.\n"
             + (f"Действует до {until_s}.\n\n" if until_s else "\n")
-            + "Теперь можно генерировать документы без отдельной оплаты за каждый."
+            + (
+                "Теперь можно генерировать документы без отдельной оплаты за каждый."
+                if settings.subscription_includes_unlimited_docs
+                else "Подписка учтена. Каждый документ оплачивается отдельно по тарифу бота."
+            )
         )
         await callback.message.answer(msg, reply_markup=main_menu(), parse_mode=None)
         await callback.answer()

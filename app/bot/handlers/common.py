@@ -25,6 +25,7 @@ from app.bot.handlers.telegram_payments import telegram_subscription_invoice_kw
 from app.integrations.yookassa.client import YooKassaApiError
 from app.services.payments import (
     PAYMENTS_CONFIGURE_HELP_TEXT,
+    PAYMENTS_TURNED_OFF_USER_MESSAGE,
     create_pending_subscription_payment,
     create_yookassa_subscription_payment,
 )
@@ -79,14 +80,22 @@ async def subscribe_month_handler(
     settings: Settings,
 ) -> None:
     price = f"{settings.subscription_price_rub} ₽"
+    if settings.subscription_includes_unlimited_docs:
+        value_intro = (
+            "Что входит:\n"
+            "• безлимитная генерация документов на 30 дней\n"
+            "• документы по консультациям и из каталога без дополнительной оплаты за каждый файл\n\n"
+        )
+    else:
+        value_intro = (
+            "С генерацией документов платёж всё равно за каждый файл по тарифу бота; запись подписки "
+            "в аккаунте продлевается на 30 дней (назначение — по правилам проекта).\n\n"
+        )
     await callback.message.answer(
         "⭐ Подписка на месяц\n\n"
         f"Стоимость: {price} / месяц.\n"
-        "Что входит:\n"
-        "• безлимитная генерация документов в течение месяца\n"
-        "• документы по итогам консультаций\n"
-        "• документы из каталога\n\n"
-        "После оплаты подписка активируется на 30 дней.",
+        + value_intro
+        + "После оплаты подписка активируется на 30 дней.",
         reply_markup=subscription_offer_keyboard(price),
         parse_mode=None,
     )
@@ -172,26 +181,15 @@ async def subscribe_pay_month_handler(
             await callback.answer()
             return
 
-        await repo.extend_subscription_month(user)
-        await pays.create(
-            user_id=user.id,
-            document_id=None,
-            amount=settings.subscription_price_rub,
-            payment_kind=PaymentKind.SUBSCRIPTION,
-            status=PaymentStatus.BYPASSED,
-        )
-        await session.commit()
-        await session.refresh(user)
-        assert user.subscription_until is not None
-        until = user.subscription_until.strftime("%d.%m.%Y %H:%M")
+        # PAYMENTS_ENABLED=false (не-админы: админы отсеяны в начале обработчика).
         await callback.message.answer(
-            f"✅ Подписка оформлена до {until}.\n\n"
-            "Теперь вы можете генерировать документы без отдельной оплаты за каждый документ.",
+            PAYMENTS_TURNED_OFF_USER_MESSAGE,
             reply_markup=main_menu(),
             parse_mode=None,
         )
-    await callback.answer()
-
+        await session.commit()
+        await callback.answer()
+        return
 
 @router.message(Command("new"))
 async def new_consultation(message: Message, state: FSMContext) -> None:
