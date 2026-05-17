@@ -1,0 +1,34 @@
+# Шаблон unit для systemd. Не переименовывайте свободно — имя задаёт свой сервис, не конфликтует с другими ботами.
+#
+# Перед включением:
+#   sudo useradd -r -s /usr/sbin/nologin -d /srv/TGBOT-i_saidru -M tgbot-isaidru
+#   sudo chown -R tgbot-isaidru:tgbot-isaidru /srv/TGBOT-i_saidru
+#
+# Если каталог другой — замените /srv/TGBOT-i_saidru в этом файле (WorkingDirectory и ExecStart).
+
+[Unit]
+Description=Telegram bot TGBOT-i_saidru (ЮрДок)
+Documentation=https://github.com/SiteCraftorCPP/TGBOT-i_saidru
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgbot-isaidru
+Group=tgbot-isaidru
+WorkingDirectory=/srv/TGBOT-i_saidru
+
+# Приложение читает секреты из .env в WorkingDirectory (см. app/core/config.py)
+ExecStart=/srv/TGBOT-i_saidru/.venv/bin/python -m app.main
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tgbot-isaidru
+
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

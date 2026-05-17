@@ -22,36 +22,45 @@ python -m app.main
 
 Принцип: свой каталог, свой виртуальный env, свой systemd‑юнит и отдельный `location` в nginx — без правок чужих сервисов.
 
-### 1) Клон и окружение (пример пути)
+### 1) Клон и виртуальное окружение
+
+Вы уже в каталоге (пример `/srv/TGBOT-i_saidru`). Дальше:
 
 ```bash
-sudo mkdir -p /srv/TGBOT-i_saidru
-sudo chown "$USER:$USER" /srv/TGBOT-i_saidru
 cd /srv/TGBOT-i_saidru
 git clone https://github.com/SiteCraftorCPP/TGBOT-i_saidru.git .
-python3.11 -m venv .venv
+
+python3 -m venv .venv
+# или явно: python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -e ".[dev]"
+
 cp .env.example .env
 chmod 600 .env
-nano .env   # секреты только здесь, в git не попадают
+nano .env   # BOT_TOKEN, DEEPSEEK_API_KEYS, DATABASE_URL, при необходимости ЮKassa
+```
+
+Отдельный системный пользователь только для этого бота (не трогает другие проекты):
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin -d /srv/TGBOT-i_saidru -M tgbot-isaidru
+sudo chown -R tgbot-isaidru:tgbot-isaidru /srv/TGBOT-i_saidru
 ```
 
 ### 2) База и миграции
 
-PostgreSQL рекомендуется в продакшене: создайте **отдельную** БД и пользователя только для этого бота, пропишите `DATABASE_URL` в `.env`. Для SQLite оставьте URL из примера (файл `*.db` в каталоге проекта не коммитится).
+PostgreSQL или SQLite — см. `.env.example`. После сохранения `.env`:
 
 ```bash
 source .venv/bin/activate
+cd /srv/TGBOT-i_saidru
 alembic upgrade head
 ```
 
-### 3) ЮKassa webhook (не пересекается с другими сайтами)
+### 3) ЮKassa webhook (опционально, отдельный location в nginx)
 
-Бот слушает HTTP только для webhook (порт задаётся `YOOKASSA_WEBHOOK_PORT`, путь — `YOOKASSA_WEBHOOK_PATH`). В личном кабинете ЮKassa URL должен совпасть с тем, что проксирует nginx.
-
-Пример фрагмента в **уже существующем** `server { ... }` вашего домена (уникальный путь только для этого бота):
+Порт **`YOOKASSA_WEBHOOK_PORT`** из `.env` должен совпадать с `proxy_pass`. Пример для **вашего** домена (добавьте блок в уже существующий `server { }`, другие сайты не трогайте):
 
 ```nginx
 location /yookassa/webhook {
@@ -63,44 +72,31 @@ location /yookassa/webhook {
 }
 ```
 
-После правки:
+(Если в `.env` другой порт — замените `8890`; путь должен совпасть с `YOOKASSA_WEBHOOK_PATH`.)
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 4) systemd (работа только из каталога проекта)
+### 4) systemd — автозапуск
 
-Файл `/etc/systemd/system/tgbot-isaidru.service` (или другое уникальное имя):
-
-```ini
-[Unit]
-Description=Telegram bot TGBOT-i_saidru (ЮрДок)
-After=network.target
-
-[Service]
-Type=simple
-User=ВАШ_ПОЛЬЗОВАТЕЛЬ
-Group=ВАША_ГРУППА
-WorkingDirectory=/srv/TGBOT-i_saidru
-EnvironmentFile=/srv/TGBOT-i_saidru/.env
-ExecStart=/srv/TGBOT-i_saidru/.venv/bin/python -m app.main
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Замените пользователя и путь при необходимости.
+В репозитории лежит готовый unit: `deploy/systemd/tgbot-isaidru.service`.
 
 ```bash
+sudo cp /srv/TGBOT-i_saidru/deploy/systemd/tgbot-isaidru.service /etc/systemd/system/
+# если ставили проект не в /srv/TGBOT-i_saidru — отредактируйте пути в unit и сохраните
+sudo nano /etc/systemd/system/tgbot-isaidru.service
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now tgbot-isaidru.service
 journalctl -u tgbot-isaidru -f
 ```
 
-На сервер должны быть установлены Python 3.11+ и, для PDF, `libreoffice` (совпадает с `LIBREOFFICE_PATH` / `soffice` в `PATH`).
+Статус: `systemctl status tgbot-isaidru`
+
+После `git pull` обновления: `sudo systemctl restart tgbot-isaidru`
+
+На сервере нужны Python 3.11+, для PDF — пакет `libreoffice` (или `soffice` в `PATH` / переменная `LIBREOFFICE_PATH` в `.env`).
 
 ## Windows и PDF
 
