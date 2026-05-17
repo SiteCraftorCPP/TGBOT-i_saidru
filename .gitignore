@@ -15,3 +15,6 @@ storage/generated/*
 !storage/generated/.gitkeep
 templates/**/*.docx
 *.log
+
+# Локальный эталон другого проекта (не коммитить)
+TGBOTAImbp77/

@@ -257,10 +257,10 @@ async def handle_document_details(
         if telegram_invoice_pay_id is not None:
             await message.answer_invoice(
                 **telegram_document_invoice_kw(
-                    document_db_id=document.id,
                     payment_row_id=telegram_invoice_pay_id,
                     price_rub=settings.document_price_rub,
                     provider_token=settings.telegram_payment_provider_token,
+                    settings=settings,
                 ),
             )
         elif pay_url:

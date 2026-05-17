@@ -30,5 +30,8 @@
 - **`PAYMENTS_ENABLED=true`** — иначе бот принудительно не ведёт в оплату.
 - **`TELEGRAM_PAYMENT_PROVIDER_TOKEN`** — токен провайдера из BotFather (ЮKassa / ЮMoney после привязки магазина).
 - Цены в рублях целые: **`DOCUMENT_PRICE_RUB`**, **`SUBSCRIPTION_PRICE_RUB`** (для счёта в Telegram не занижайте ниже порога Telegram для RUB, см. выше).
+- **`YOOKASSA_TAX_SYSTEM_CODE`** — если не `0`, в счёт добавляется JSON **`provider_data`** с блоком **`receipt`** для фискализации (54‑ФЗ), как принято в связке Telegram + ЮKassa. Код системы налогообложения — значения из [документации ЮKassa](https://yookassa.ru/developers/payment-acceptance/receipts/54fz/yoomoney/other-services/parameters#codessistem-nalogooblozheniya).
+- **`YOOKASSA_VAT_CODE`** — номер ставки НДС для позиции в чеке (список `vat_code` в API receipt).
+- При нативном счёте в Telegram счёт отправляется **как в рабочем эталоне ЮKassa**: всегда запрашиваются **email и телефон** и передаются провайдеру (`need_email` / `need_phone_number`).
 
 Сценарий **только браузера (ЮKassa redirect)** задаётся отдельно: **`YOOKASSA_SHOP_ID`**, **`YOOKASSA_SECRET_KEY`**, **`YOOKASSA_RETURN_URL`**, webhook — см. `.env.example` и код `YooKassaClient`.

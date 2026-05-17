@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from aiogram import F, Router
@@ -25,7 +26,64 @@ from app.services.telegram_invoice_payload import (
 logger = logging.getLogger(__name__)
 router = Router()
 
-_CHECK_FAILED = "Платёж не найден или данные счёта устарели. Начните оформление заново."
+CHECK_FAILED_PRECHECKOUT = "Платёж не найден или данные счёта устарели. Начните оформление заново."
+
+DOCUMENT_INVOICE_DESCRIPTION = "Подготовка документа"
+
+
+def yookassa_telegram_invoice_extra_kwargs(
+    settings: Settings,
+    *,
+    minor_amount: int,
+    receipt_item_description: str,
+) -> dict[str, object]:
+    """
+    Доп. аргументы send_invoice 1:1 по рабочему эталону (TGBOTAImbp77 subscribe_pay_callback): всегда
+    need_email/need_phone для ЮKassa; при YOOKASSA_TAX_SYSTEM_CODE≠0 — provider_data с receipt.
+    """
+    out: dict[str, object] = {
+        "need_email": True,
+        "send_email_to_provider": True,
+        "need_phone_number": True,
+        "send_phone_number_to_provider": True,
+    }
+
+    tax_code_raw = getattr(settings, "yookassa_tax_system_code", 0)
+    try:
+        tax_code = int(tax_code_raw or 0)
+    except (TypeError, ValueError):
+        tax_code = 0
+    if tax_code <= 0:
+        return out
+
+    desc = (receipt_item_description or "Услуга").strip()[:128]
+    try:
+        vat_code = int(settings.yookassa_vat_code or 1)
+    except (TypeError, ValueError):
+        vat_code = 1
+    if minor_amount % 100 == 0:
+        value_rub: float | int = int(minor_amount / 100)
+    else:
+        value_rub = round(minor_amount / 100.0, 2)
+
+    receipt = {
+        "receipt": {
+            "tax_system_code": tax_code,
+            "items": [
+                {
+                    "description": desc,
+                    "quantity": 1,
+                    "amount": {"value": value_rub, "currency": "RUB"},
+                    "vat_code": vat_code,
+                    "payment_mode": "full_payment",
+                    # Как в эталонном боте (ЮKassa + Telegram принимает commodity).
+                    "payment_subject": "commodity",
+                },
+            ],
+        },
+    }
+    out["provider_data"] = json.dumps(receipt, ensure_ascii=False)
+    return out
 
 
 async def _validate_invoice_for_checkout(
@@ -39,17 +97,17 @@ async def _validate_invoice_for_checkout(
     """Если платёж неверен — текст ошибки для answer(ok=False); иначе None."""
     parsed = parse_telegram_invoice_payload(payload)
     if not parsed:
-        return _CHECK_FAILED
+        return CHECK_FAILED_PRECHECKOUT
     kind_expected, pay_id = parsed
     async with session_factory() as session:
         pay = await PaymentRepository(session).get_payment(pay_id)
     if pay is None:
-        return _CHECK_FAILED
+        return CHECK_FAILED_PRECHECKOUT
     meta = pay.payment_meta or {}
     try:
         owner_tid = int(meta.get("telegram_user_id"))
     except (TypeError, ValueError):
-        return _CHECK_FAILED
+        return CHECK_FAILED_PRECHECKOUT
     cur = (currency or "").strip().upper()
     expected_cur = (pay.currency or "RUB").strip().upper()
     expected_minor = rub_amount_to_telegram_minor_units(int(pay.amount))
@@ -67,7 +125,7 @@ async def _validate_invoice_for_checkout(
             pay_id,
             telegram_user_id,
         )
-        return _CHECK_FAILED
+        return CHECK_FAILED_PRECHECKOUT
     return None
 
 
@@ -143,21 +201,28 @@ async def handle_successful_payment(
 
 def telegram_document_invoice_kw(
     *,
-    document_db_id: int,
     payment_row_id: int,
     price_rub: int,
     provider_token: str,
-) -> dict:
+    settings: Settings,
+) -> dict[str, object]:
     amount_minor = rub_amount_to_telegram_minor_units(price_rub)
-
-    return dict(
+    base = dict(
         title="Документ",
-        description=f"Подготовка документа №{document_db_id}",
+        description=DOCUMENT_INVOICE_DESCRIPTION,
         payload=encode_document_payment_payload(payment_row_id),
         provider_token=provider_token.strip(),
         currency="RUB",
         prices=[LabeledPrice(label="Документ", amount=amount_minor)],
     )
+    base.update(
+        yookassa_telegram_invoice_extra_kwargs(
+            settings,
+            minor_amount=amount_minor,
+            receipt_item_description=DOCUMENT_INVOICE_DESCRIPTION,
+        ),
+    )
+    return base
 
 
 def telegram_subscription_invoice_kw(
@@ -165,10 +230,11 @@ def telegram_subscription_invoice_kw(
     payment_row_id: int,
     price_rub: int,
     provider_token: str,
-) -> dict:
+    settings: Settings,
+) -> dict[str, object]:
     amount_minor = rub_amount_to_telegram_minor_units(price_rub)
 
-    return dict(
+    base = dict(
         title="Подписка 30 дней",
         description="Безлимитная генерация документов на месяц",
         payload=encode_subscription_payment_payload(payment_row_id),
@@ -176,3 +242,13 @@ def telegram_subscription_invoice_kw(
         currency="RUB",
         prices=[LabeledPrice(label="Подписка на месяц", amount=amount_minor)],
     )
+    base.update(
+        yookassa_telegram_invoice_extra_kwargs(
+            settings,
+            minor_amount=amount_minor,
+            receipt_item_description=f"Подписка @{settings.bot_username} (30 дн.)".replace("@@", "@")[
+                :128
+            ],
+        ),
+    )
+    return base

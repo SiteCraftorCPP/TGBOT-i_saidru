@@ -124,7 +124,7 @@ class PaymentService:
             client = YooKassaClient(self.settings)
             payment_response = await client.create_payment_redirect(
                 amount_value=amt_str,
-                description=f"Документ №{document.id}",
+                description="Подготовка документа",
                 metadata=yoo_meta,
                 idempotence_key=idem,
             )

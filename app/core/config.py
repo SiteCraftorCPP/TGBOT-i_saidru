@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     yookassa_secret_key: str = Field(default="", alias="YOOKASSA_SECRET_KEY")
     yookassa_return_url: str = Field(default="", alias="YOOKASSA_RETURN_URL")
     telegram_payment_provider_token: str = Field(default="", alias="TELEGRAM_PAYMENT_PROVIDER_TOKEN")
+    # Чек 54‑ФЗ через ЮKassa в Telegram: при 0 в send_invoice не передаём provider_data с receipt.
+    yookassa_tax_system_code: int = Field(default=0, alias="YOOKASSA_TAX_SYSTEM_CODE")
+    yookassa_vat_code: int = Field(default=1, alias="YOOKASSA_VAT_CODE")
 
     yookassa_webhook_listen_host: str = Field(default="127.0.0.1", alias="YOOKASSA_WEBHOOK_HOST")
     yookassa_webhook_listen_port: int = Field(default=0, alias="YOOKASSA_WEBHOOK_PORT")

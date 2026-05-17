@@ -157,6 +157,7 @@ async def subscribe_pay_month_handler(
                         payment_row_id=pay.id,
                         price_rub=settings.subscription_price_rub,
                         provider_token=settings.telegram_payment_provider_token,
+                        settings=settings,
                     ),
                 )
                 await callback.answer()
