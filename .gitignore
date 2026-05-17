@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cursor/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+*.egg-info/
+storage/generated/*
+!storage/generated/.gitkeep
+templates/**/*.docx
+*.log
