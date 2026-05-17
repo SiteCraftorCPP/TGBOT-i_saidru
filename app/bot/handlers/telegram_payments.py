@@ -55,19 +55,19 @@ async def _validate_invoice_for_checkout(
     expected_minor = rub_amount_to_telegram_minor_units(int(pay.amount))
     actual_kind = pay.payment_kind or PaymentKind.DOCUMENT.value
 
-        if (
-            owner_tid != telegram_user_id
-            or actual_kind != kind_expected
-            or cur != expected_cur
-            or int(total_amount_minor) != expected_minor
-            or pay.status != PaymentStatus.PENDING.value
-        ):
-            logger.info(
-                "Telegram invoice: отклонён pre-checkout pay_id=%s telegram_user=%s",
-                pay_id,
-                telegram_user_id,
-            )
-            return _CHECK_FAILED
+    if (
+        owner_tid != telegram_user_id
+        or actual_kind != kind_expected
+        or cur != expected_cur
+        or int(total_amount_minor) != expected_minor
+        or pay.status != PaymentStatus.PENDING.value
+    ):
+        logger.info(
+            "Telegram invoice: отклонён pre-checkout pay_id=%s telegram_user=%s",
+            pay_id,
+            telegram_user_id,
+        )
+        return _CHECK_FAILED
     return None
 
 
