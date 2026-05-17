@@ -13,10 +13,39 @@ from app.services.payment_effects import apply_paid_payment_effects
 
 logger = logging.getLogger(__name__)
 
+# Официальный справочник валют для Bot Payments — поле «min_amount» для RUB (в минорных единицах exp=2, т.е. копейки):
+# https://core.telegram.org/bots/payments/currencies.json
+TELEGRAM_RUB_MIN_AMOUNT_MINOR = 8773
+
+
+class TelegramInvoiceAmountTooLowError(ValueError):
+    """Цена ниже нижней границы Telegram для fiat-RUB счёта."""
+
 
 def rub_amount_to_telegram_minor_units(amount_rub: int) -> int:
-    """RUB для Telegram Payments — сумма в копейках (минорных единицах)."""
-    return amount_rub * 100
+    """Целые рубли → копейки (соответствует RUB.exp=2 в Telegram)."""
+    rub = int(amount_rub)
+    if rub <= 0:
+        raise TelegramInvoiceAmountTooLowError(
+            "Сумма платежа в рублях должна быть целым положительным числом для Telegram Payments."
+        )
+    return rub * 100
+
+
+def enforce_telegram_rub_invoice_minimum(amount_rub: int, *, what: str) -> None:
+    """
+    Если суммы не хватает для Telegram Payments, платёж у провайдера часто завершается ошибкой уже после pre-checkout.
+
+    Telegram зашивает ограничения в currencies.json для каждого кода валюты.
+    """
+    minor = rub_amount_to_telegram_minor_units(amount_rub)
+    if minor < TELEGRAM_RUB_MIN_AMOUNT_MINOR:
+        min_whole_rub = (TELEGRAM_RUB_MIN_AMOUNT_MINOR + 99) // 100
+        raise TelegramInvoiceAmountTooLowError(
+            f"Сумма {amount_rub} ₽ ниже минимальной для платежа счёта в Telegram (правило RUB в "
+            f"https://core.telegram.org/bots/payments/currencies.json — не меньше ~{min_whole_rub} ₽ как целое). "
+            f"Поднимите цену в .env ({what})."
+        )
 
 
 async def finalize_telegram_invoice_payment(

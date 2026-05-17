@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.db.models import Document, DocumentStatus, Payment, PaymentKind, PaymentStatus, User
 from app.db.repositories import DocumentRepository, PaymentRepository
 from app.integrations.yookassa.client import YooKassaApiError, YooKassaClient
+from app.services.telegram_invoice_finalize import enforce_telegram_rub_invoice_minimum
 
 
 PAYMENTS_CONFIGURE_HELP_TEXT = (
@@ -20,8 +21,15 @@ PAYMENTS_CONFIGURE_HELP_TEXT = (
 
 
 PAYMENTS_TURNED_OFF_USER_MESSAGE = (
-    "Платное оформление документов сейчас недоступно. "
-    "Если нужна помощь — напишите администратору."
+    "Оплата документов сейчас недоступна. Попробуйте позже или напишите администратору бота."
+)
+
+# Показываем только ADMIN_IDS (владельцу), если он сам ловит отказ из‑за выключенного флага.
+PAYMENTS_DISABLED_ADMIN_DIAGNOSTIC = (
+    "Платежи на сервере выключены.\n\n"
+    "В каталоге бота в файле .env должно быть: PAYMENTS_ENABLED=true (без лишних пробелов, только true/1).\n"
+    "Дальше: TELEGRAM_PAYMENT_PROVIDER_TOKEN (счёт в Telegram) или ключи ЮKassa по сценарию со ссылкой.\n\n"
+    "После сохранения .env: sudo systemctl restart tgbot-isaidru.service"
 )
 
 
@@ -84,6 +92,9 @@ class PaymentService:
             "document_title": str(ctx.get("document_title", ""))[:500],
         }
         amount_rub = self.settings.document_price_rub
+
+        if tg_native:
+            enforce_telegram_rub_invoice_minimum(amount_rub, what="DOCUMENT_PRICE_RUB")
 
         pay = await payments.create(
             user_id=document.user_id,

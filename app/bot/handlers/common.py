@@ -23,8 +23,13 @@ from app.db.models import PaymentKind, PaymentStatus
 from app.db.repositories import PaymentRepository, UserRepository
 from app.bot.handlers.telegram_payments import telegram_subscription_invoice_kw
 from app.integrations.yookassa.client import YooKassaApiError
+from app.services.telegram_invoice_finalize import (
+    TelegramInvoiceAmountTooLowError,
+    enforce_telegram_rub_invoice_minimum,
+)
 from app.services.payments import (
     PAYMENTS_CONFIGURE_HELP_TEXT,
+    PAYMENTS_DISABLED_ADMIN_DIAGNOSTIC,
     PAYMENTS_TURNED_OFF_USER_MESSAGE,
     create_pending_subscription_payment,
     create_yookassa_subscription_payment,
@@ -116,6 +121,15 @@ async def subscribe_pay_month_handler(
         )
         await callback.answer()
         return
+
+    if settings.payments_enabled and settings.telegram_native_payment_token_configured():
+        try:
+            enforce_telegram_rub_invoice_minimum(settings.subscription_price_rub, what="SUBSCRIPTION_PRICE_RUB")
+        except TelegramInvoiceAmountTooLowError as exc:
+            await callback.message.answer(str(exc), reply_markup=main_menu(), parse_mode=None)
+            await callback.answer()
+            return
+
     async with session_factory() as session:
         repo = UserRepository(session)
         user = await repo.get_or_create(callback.from_user.id, callback.from_user.username)

@@ -30,10 +30,12 @@ from app.db.repositories import (
     UserRepository,
 )
 from app.integrations.yookassa.client import YooKassaApiError
+from app.services.telegram_invoice_finalize import TelegramInvoiceAmountTooLowError
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.documents import DocumentGenerator
 from app.services.payments import (
     PAYMENTS_CONFIGURE_HELP_TEXT,
+    PAYMENTS_DISABLED_ADMIN_DIAGNOSTIC,
     PAYMENTS_TURNED_OFF_USER_MESSAGE,
     PaymentService,
 )
@@ -236,6 +238,10 @@ async def handle_document_details(
                     "document_title": str(document_title),
                 },
             )
+        except TelegramInvoiceAmountTooLowError as exc:
+            await session.rollback()
+            await message.answer(str(exc), parse_mode=None)
+            return
         except YooKassaApiError as exc:
             await session.commit()
             logger.warning("ЮKassa create_payment_redirect: %s", exc)
@@ -266,7 +272,10 @@ async def handle_document_details(
             )
         else:
             if not settings.payments_enabled:
-                await message.answer(PAYMENTS_TURNED_OFF_USER_MESSAGE, parse_mode=None)
+                if settings.is_admin(message.from_user.id):
+                    await message.answer(PAYMENTS_DISABLED_ADMIN_DIAGNOSTIC, parse_mode=None)
+                else:
+                    await message.answer(PAYMENTS_TURNED_OFF_USER_MESSAGE, parse_mode=None)
             else:
                 await message.answer(PAYMENTS_CONFIGURE_HELP_TEXT, parse_mode=None)
         return
