@@ -44,8 +44,11 @@ def _build_admin_message(
 ) -> str:
     lines = [
         "Панель администратора 📊",
-        f"Всего оплат: {payments_doc}",
-        f"Всего подписок: {payments_sub}",
+        "Ниже — число успешных транзакций (статус paid в базе):",
+        f" • оплат за документы: {payments_doc}",
+        f" • оплат подписки: {payments_sub}",
+        "Дальше список людей у которых хотя бы один платёж paid;",
+        "для каждого показывают последнюю успешную оплату.",
     ]
     if list_total > page_size:
         total_pages = max(1, (list_total + page_size - 1) // page_size)

@@ -38,6 +38,7 @@ class UserRepository:
         await self.session.flush()
 
     async def extend_subscription_month(self, user: User) -> None:
+        """+30 календарных дней от max(сейчас, subscription_until) — продление суммируется до истечения."""
         from datetime import datetime, timedelta, timezone
 
         now = datetime.now(timezone.utc)
@@ -202,7 +203,10 @@ class PaymentRepository:
         await self.session.flush()
 
     async def count_completed_by_kind(self) -> tuple[int, int]:
-        """Подтверждённые платежи (статус paid — в т.ч. после webhook ЮKassa): документы / подписки."""
+        """
+        Количество строк payments со статусом paid по виду платежа.
+        Это сумма успешных транзакций (один человек может внести несколько платежей за документы).
+        """
         st = PaymentStatus.PAID.value
         q_doc = await self.session.execute(
             select(func.count())
@@ -217,7 +221,7 @@ class PaymentRepository:
         return int(q_doc.scalar_one() or 0), int(q_sub.scalar_one() or 0)
 
     async def list_buyers_who_paid(self, *, offset: int = 0, limit: int = 10) -> tuple[list[PaidBuyerRow], int]:
-        """Пользователи с хотя бы одним подтверждённым платежом (paid)."""
+        """Один пользователь — одна строка: его последний (по дате) платёж со статусом paid."""
         paid_statuses = (PaymentStatus.PAID.value,)
 
         rn = func.row_number().over(
