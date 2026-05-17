@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     libreoffice_path: str = Field(default="soffice", alias="LIBREOFFICE_PATH")
     storage_dir: Path = Field(default=Path("storage/generated"), alias="STORAGE_DIR")
     templates_dir: Path = Field(default=Path("templates"), alias="TEMPLATES_DIR")
+
+    @field_validator(
+        "telegram_payment_provider_token",
+        "yookassa_shop_id",
+        "yookassa_secret_key",
+        "yookassa_return_url",
+        mode="before",
+    )
+    @classmethod
+    def _strip_sensitive_strings(cls, v: object) -> object:
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v.replace("\ufeff", "").strip()
+        return v
 
     @property
     def admin_ids_list(self) -> list[int]:

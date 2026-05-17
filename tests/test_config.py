@@ -25,6 +25,17 @@ def test_yookassa_env_detects_configuration() -> None:
     assert s.yookassa_configured() is True
 
 
+def test_provider_token_survives_utf8_bom_prefix() -> None:
+    bom_tok = "\ufeffstripe-like:token:value"
+    s = Settings(
+        BOT_TOKEN="t",
+        DEEPSEEK_API_KEYS="k",
+        TELEGRAM_PAYMENT_PROVIDER_TOKEN=bom_tok,
+    )
+    assert s.telegram_payment_provider_token == "stripe-like:token:value"
+    assert s.telegram_native_payment_token_configured() is True
+
+
 def test_telegram_provider_token_optional() -> None:
     empty = Settings(BOT_TOKEN="t", DEEPSEEK_API_KEYS="k")
     assert empty.telegram_native_payment_token_configured() is False

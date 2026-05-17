@@ -25,6 +25,15 @@ async def main() -> None:
     settings = get_settings()
     settings.validate_runtime()
 
+    if settings.payments_enabled:
+        if not settings.telegram_native_payment_token_configured() and not settings.yookassa_configured():
+            logger.warning(
+                "PAYMENTS_ENABLED=true, но в конфиге пустые TELEGRAM_PAYMENT_PROVIDER_TOKEN "
+                "и пара YOOKASSA_SHOP_ID + YOOKASSA_SECRET_KEY. Платежи не заработают. "
+                "Проверьте .env в каталоге WorkingDirectory systemd (одна строка, без кавычек вокруг значения "
+                "и без пробелов вокруг знака '='), сохраните и сделайте restart сервиса."
+            )
+
     catalog = TemplateCatalog(settings.templates_dir).load()
     deepseek = DeepSeekClient(settings)
     generator = DocumentGenerator(settings=settings, catalog=catalog, deepseek=deepseek)
