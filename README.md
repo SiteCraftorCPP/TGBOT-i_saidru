@@ -108,7 +108,7 @@ LIBREOFFICE_PATH=C:\Program Files\LibreOffice\program\soffice.exe
 
 ## Платежи / ЮKassa
 
-При `PAYMENTS_ENABLED=true` нужны ключи ЮKassa, HTTPS `YOOKASSA_RETURN_URL`, положительный `YOOKASSA_WEBHOOK_PORT` и прокси на ваш `YOOKASSA_WEBHOOK_PATH` (см. `.env.example`). В админке учитываются только записи со статусом **`paid`** (после успешного webhook).
+При `PAYMENTS_ENABLED=true` нужны ключи ЮKassa, HTTPS `YOOKASSA_RETURN_URL`, положительный `YOOKASSA_WEBHOOK_PORT` и прокси на ваш `YOOKASSA_WEBHOOK_PATH` (см. `.env.example`).
 
 ## Шаблоны
 

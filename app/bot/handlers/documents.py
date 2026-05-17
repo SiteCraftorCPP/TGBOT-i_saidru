@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.bot.handlers.telegram_payments import telegram_document_invoice_kw
 from app.bot.keyboards import (
     PAY_DONE_PREFIX,
     confirm_generation_keyboard,
@@ -31,7 +32,7 @@ from app.db.repositories import (
 from app.integrations.yookassa.client import YooKassaApiError
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.documents import DocumentGenerator
-from app.services.payments import PaymentService
+from app.services.payments import PAYMENTS_CONFIGURE_HELP_TEXT, PaymentService
 from app.schemas.ai import DocumentQuestionsResult
 
 router = Router()
@@ -220,7 +221,7 @@ async def handle_document_details(
         documents = DocumentRepository(session)
         document = await documents.create(user_id=user.id, document_type="dynamic")
         try:
-            paid, pay_url = await payment_service.prepare_document_access(
+            paid, pay_url, telegram_invoice_pay_id = await payment_service.prepare_document_access(
                 document=document,
                 documents=documents,
                 payments=PaymentRepository(session),
@@ -243,7 +244,16 @@ async def handle_document_details(
         await session.commit()
 
     if not paid:
-        if pay_url:
+        if telegram_invoice_pay_id is not None:
+            await message.answer_invoice(
+                **telegram_document_invoice_kw(
+                    document_db_id=document.id,
+                    payment_row_id=telegram_invoice_pay_id,
+                    price_rub=settings.document_price_rub,
+                    provider_token=settings.telegram_payment_provider_token,
+                ),
+            )
+        elif pay_url:
             await message.answer(
                 f"Чтобы продолжить, оплатите {settings.document_price_rub} ₽.\n"
                 "После успешной оплаты вы получите сообщение — нажмите «Продолжить» там.",
@@ -251,12 +261,7 @@ async def handle_document_details(
                 reply_markup=yookassa_checkout_keyboard(pay_url),
             )
         else:
-            await message.answer(
-                "Оплаты включены (PAYMENTS_ENABLED), но платёжка ЮKassa не сконфигурирована: "
-                "нужны YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY, а также HTTPS YOOKASSA_RETURN_URL "
-                "(redirect). После включения пробросьте webhook на свой HTTP-порт из YOOKASSA_WEBHOOK_PORT.",
-                parse_mode=None,
-            )
+            await message.answer(PAYMENTS_CONFIGURE_HELP_TEXT, parse_mode=None)
         return
 
     await state.set_state(DocumentStates.confirming_generation)
@@ -296,7 +301,7 @@ async def pay_done_continue(
         return
 
     if payment.status != PaymentStatus.PAID.value:
-        await callback.answer("Платёж ещё не подтверждён ЮKassa", show_alert=True)
+        await callback.answer("Платёж ещё не подтверждён.", show_alert=True)
         return
 
     meta = payment.payment_meta or {}

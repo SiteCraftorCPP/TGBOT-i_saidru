@@ -5,9 +5,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import Settings
-from app.db.models import Document, DocumentStatus, PaymentKind, PaymentStatus, User
+from app.db.models import Document, DocumentStatus, Payment, PaymentKind, PaymentStatus, User
 from app.db.repositories import DocumentRepository, PaymentRepository
 from app.integrations.yookassa.client import YooKassaApiError, YooKassaClient
+
+
+PAYMENTS_CONFIGURE_HELP_TEXT = (
+    "Оплата включена (PAYMENTS_ENABLED), но платёжка не сконфигурирована.\n\n"
+    "Чтобы платить без браузера (кнопкой в Telegram), укажите TELEGRAM_PAYMENT_PROVIDER_TOKEN "
+    "(BotFather → Payments, провайдер ЮKassa / ЮMoney и токен).\n\n"
+    "Либо настройте сценарий по ссылке: YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, YOOKASSA_RETURN_URL "
+    "и проброс webhook на ваш порт из YOOKASSA_WEBHOOK_HOST / YOOKASSA_WEBHOOK_PORT."
+)
 
 
 class PaymentService:
@@ -37,19 +46,22 @@ class PaymentService:
         payments: PaymentRepository,
         user: User,
         flow_context: dict[str, Any] | None = None,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, int | None]:
         """
-        True, None — можно генерировать (подписка / безлимит / тест без списания).
-        False, url — нужна ЮKassa, открыть ссылку возврата redirect.
-        False, None — оплата «включена», но платёжка не сконфигурирована (URL не создан).
+        True, None, None — можно генерировать (без оплаты / уже оплачено).
+        False, url или None, None — redirect ЮKassa (открыть ссылку браузере).
+        False, None, payment_row_id — нативный invoice в Telegram для этой строки payments.
+        False, None, None — оплата «включена», но ни Telegram-токена, ни API ЮKassa нет (или сбой конфигурации).
         """
         if self.is_usage_unlimited(user):
             await documents.update_status(document, DocumentStatus.PAID)
-            return True, None
+            return True, None, None
 
         if self.settings.payments_enabled:
-            if not self.settings.yookassa_configured():
-                return False, None
+            tg_native = self.settings.telegram_native_payment_token_configured()
+            yoo = self.settings.yookassa_configured()
+            if not tg_native and not yoo:
+                return False, None, None
 
             ctx = flow_context or {}
             idem = str(uuid.uuid4())
@@ -72,6 +84,12 @@ class PaymentService:
                 idempotency_key=idem,
             )
 
+            if tg_native:
+                await payments.flush()
+                return False, None, pay.id
+
+            assert yoo
+
             yoo_meta = {
                 "payment_db_id": str(pay.id),
                 "telegram_user_id": str(user.telegram_id),
@@ -82,7 +100,7 @@ class PaymentService:
 
             try:
                 client = YooKassaClient(self.settings)
-                yoo = await client.create_payment_redirect(
+                payment_response = await client.create_payment_redirect(
                     amount_value=amt_str,
                     description=f"Документ №{document.id}",
                     metadata=yoo_meta,
@@ -92,11 +110,11 @@ class PaymentService:
                 raise
 
             pay_url = ""
-            if yoo.confirmation and yoo.confirmation.confirmation_url:
-                pay_url = yoo.confirmation.confirmation_url
-            pay.provider_payment_charge_id = yoo.id
+            if payment_response.confirmation and payment_response.confirmation.confirmation_url:
+                pay_url = payment_response.confirmation.confirmation_url
+            pay.provider_payment_charge_id = payment_response.id
             await payments.flush()
-            return False, pay_url or None
+            return False, pay_url or None, None
 
         await payments.create(
             user_id=document.user_id,
@@ -106,7 +124,30 @@ class PaymentService:
             status=PaymentStatus.BYPASSED,
         )
         await documents.update_status(document, DocumentStatus.PAID)
-        return True, None
+        return True, None, None
+
+
+async def create_pending_subscription_payment(
+    payments: PaymentRepository,
+    user: User,
+    settings: Settings,
+) -> Payment:
+    """Строка PENDING для подписки без вызова API ЮKassa (для Telegram invoice)."""
+    idem = str(uuid.uuid4())
+    amount_rub = settings.subscription_price_rub
+    db_meta: dict[str, Any] = {
+        "telegram_user_id": user.telegram_id,
+        "payment_purpose": PaymentKind.SUBSCRIPTION.value,
+    }
+    return await payments.create(
+        user_id=user.id,
+        document_id=None,
+        amount=amount_rub,
+        payment_kind=PaymentKind.SUBSCRIPTION,
+        status=PaymentStatus.PENDING,
+        payment_meta=db_meta,
+        idempotency_key=idem,
+    )
 
 
 async def create_yookassa_subscription_payment(
@@ -119,21 +160,8 @@ async def create_yookassa_subscription_payment(
     POST /payments в ЮKassa для подписки. Возвращает (confirmation_url или None, payment_row_id или None).
     Вызывает YooKassaApiError при сбое API (запись PENDING уже будет в БД).
     """
-    idem = str(uuid.uuid4())
-    amount_rub = settings.subscription_price_rub
-    db_meta: dict[str, Any] = {
-        "telegram_user_id": user.telegram_id,
-        "payment_purpose": PaymentKind.SUBSCRIPTION.value,
-    }
-    pay = await payments.create(
-        user_id=user.id,
-        document_id=None,
-        amount=amount_rub,
-        payment_kind=PaymentKind.SUBSCRIPTION,
-        status=PaymentStatus.PENDING,
-        payment_meta=db_meta,
-        idempotency_key=idem,
-    )
+    pay = await create_pending_subscription_payment(payments, user, settings)
+    idem = pay.idempotency_key or str(uuid.uuid4())
 
     yoo_meta = {
         "payment_db_id": str(pay.id),
@@ -143,7 +171,7 @@ async def create_yookassa_subscription_payment(
 
     client = YooKassaClient(settings)
     yoo = await client.create_payment_redirect(
-        amount_value=f"{amount_rub}.00",
+        amount_value=f"{settings.subscription_price_rub}.00",
         description="Подписка на 30 дней",
         metadata=yoo_meta,
         idempotence_key=idem,

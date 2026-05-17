@@ -21,8 +21,13 @@ from app.core.constants import (
 )
 from app.db.models import PaymentKind, PaymentStatus
 from app.db.repositories import PaymentRepository, UserRepository
+from app.bot.handlers.telegram_payments import telegram_subscription_invoice_kw
 from app.integrations.yookassa.client import YooKassaApiError
-from app.services.payments import create_yookassa_subscription_payment
+from app.services.payments import (
+    PAYMENTS_CONFIGURE_HELP_TEXT,
+    create_pending_subscription_payment,
+    create_yookassa_subscription_payment,
+)
 
 router = Router()
 
@@ -108,13 +113,28 @@ async def subscribe_pay_month_handler(
         pays = PaymentRepository(session)
 
         if settings.payments_enabled:
-            if not settings.yookassa_configured():
+            tg_native = settings.telegram_native_payment_token_configured()
+            yoo_ok = settings.yookassa_configured()
+
+            if not tg_native and not yoo_ok:
                 await callback.message.answer(
-                    "ЮKassa не настроена: укажите YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, "
-                    "YOOKASSA_RETURN_URL, поднимите HTTP webhook (для этого задайте YOOKASSA_WEBHOOK_HOST "
-                    "и положительный YOOKASSA_WEBHOOK_PORT и пробросьте HTTPS до него из личного кабинета ЮKassa).",
+                    PAYMENTS_CONFIGURE_HELP_TEXT,
                     reply_markup=main_menu(),
                     parse_mode=None,
+                )
+                await session.commit()
+                await callback.answer()
+                return
+
+            if tg_native:
+                pay = await create_pending_subscription_payment(pays, user, settings)
+                await session.commit()
+                await callback.message.answer_invoice(
+                    **telegram_subscription_invoice_kw(
+                        payment_row_id=pay.id,
+                        price_rub=settings.subscription_price_rub,
+                        provider_token=settings.telegram_payment_provider_token,
+                    ),
                 )
                 await callback.answer()
                 return

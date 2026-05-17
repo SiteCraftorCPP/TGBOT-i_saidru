@@ -7,8 +7,9 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import DocumentStatus, PaymentKind, PaymentStatus, User
-from app.db.repositories import DocumentRepository, PaymentRepository, UserRepository
+from app.db.models import PaymentStatus
+from app.db.repositories import PaymentRepository
+from app.services.payment_effects import apply_paid_payment_effects
 
 logger = logging.getLogger(__name__)
 
@@ -48,22 +49,7 @@ async def finalize_yoo_provider_payment(
 
     payment.provider_payment_charge_id = provider_payment_id
     pays.mark_paid(payment)
-
-    kind = payment.payment_kind or PaymentKind.DOCUMENT.value
-
-    if kind == PaymentKind.DOCUMENT.value:
-        docs = DocumentRepository(session)
-        if payment.document_id is not None:
-            doc = await docs.get(payment.document_id)
-            if doc is not None:
-                await docs.update_status(doc, DocumentStatus.PAID)
-
-    elif kind == PaymentKind.SUBSCRIPTION.value:
-        users_repo = UserRepository(session)
-        user = await session.get(User, payment.user_id)
-        if user is not None:
-            await users_repo.extend_subscription_month(user)
-
+    await apply_paid_payment_effects(session, payment)
     await session.flush()
     return payment.payment_meta or {}, payment.id, True
 
