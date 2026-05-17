@@ -46,7 +46,6 @@ def _build_admin_message(
         "Панель администратора 📊",
         f"Всего оплат: {payments_doc}",
         f"Всего подписок: {payments_sub}",
-        "(Только paid — успешная оплата ЮKassa.)",
     ]
     if list_total > page_size:
         total_pages = max(1, (list_total + page_size - 1) // page_size)
