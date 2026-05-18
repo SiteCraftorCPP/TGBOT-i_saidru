@@ -68,6 +68,15 @@ class Settings(BaseSettings):
             return v.replace("\ufeff", "").strip()
         return v
 
+    @field_validator("deepseek_model", "deepseek_base_url", mode="before")
+    @classmethod
+    def _strip_deepseek_strings(cls, v: object) -> object:
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return v.replace("\ufeff", "").strip()
+        return v
+
     @property
     def admin_ids_list(self) -> list[int]:
         if not self.admin_ids:

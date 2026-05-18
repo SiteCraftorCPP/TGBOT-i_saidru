@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections.abc import Sequence
 from itertools import cycle
@@ -21,6 +22,9 @@ from app.schemas.ai import (
 
 class DeepSeekError(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 # Служебные слова юридических заголовков (не считаются «предметом», упомянутым пользователем).
@@ -294,7 +298,8 @@ class DeepSeekClient:
             body["max_tokens"] = max_tokens
         # Пробуем каждый ключ по кругу (Round-Robin). Если ключ отвалился (например, лимит 429),
         # сразу же, без задержек, пробуем следующий ключ из пула.
-        for _ in range(len(self.settings.deepseek_api_keys_list)):
+        n_keys = len(self.settings.deepseek_api_keys_list)
+        for attempt in range(1, n_keys + 1):
             api_key = next(self._keys)
             try:
                 response = await self._http.post(
@@ -306,12 +311,25 @@ class DeepSeekClient:
                 content = response.json()["choices"][0]["message"]["content"]
                 return json.loads(content)
             except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                errors.append(f"HTTP {status}")
+                code = exc.response.status_code
+                errors.append(f"HTTP {code}")
+                logger.warning(
+                    "DeepSeek попытка %s/%s: HTTP %s, пробую следующий ключ из пула",
+                    attempt,
+                    n_keys,
+                    code,
+                )
                 # Если словили Too Many Requests (429) или ошибку сервера, идем к следующему ключу
             except (httpx.RequestError, KeyError, json.JSONDecodeError) as exc:
-                errors.append(type(exc).__name__)
-                
+                errors.append(f"{type(exc).__name__}: {exc}")
+                logger.warning(
+                    "DeepSeek попытка %s/%s: после ответа API — %s: %s, пробую следующий ключ",
+                    attempt,
+                    n_keys,
+                    type(exc).__name__,
+                    exc,
+                )
+
         raise DeepSeekError("Все DeepSeek API ключи вернули ошибку: " + " | ".join(errors))
 
     def _consult_system_prompt(self, template_hint: str) -> str:

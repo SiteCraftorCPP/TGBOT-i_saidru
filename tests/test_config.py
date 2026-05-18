@@ -36,6 +36,15 @@ def test_provider_token_survives_utf8_bom_prefix() -> None:
     assert s.telegram_native_payment_token_configured() is True
 
 
+def test_deepseek_model_strips_spaces() -> None:
+    s = Settings(
+        BOT_TOKEN="t",
+        DEEPSEEK_API_KEYS="k",
+        DEEPSEEK_MODEL="  deepseek-v4-pro ",
+    )
+    assert s.deepseek_model == "deepseek-v4-pro"
+
+
 def test_telegram_provider_token_optional() -> None:
     empty = Settings(BOT_TOKEN="t", DEEPSEEK_API_KEYS="k")
     assert empty.telegram_native_payment_token_configured() is False

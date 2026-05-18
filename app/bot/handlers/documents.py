@@ -3,7 +3,7 @@ from html import escape
 from pathlib import Path
 
 from aiogram import F, Router
-from aiogram.filters import StateFilter
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -21,7 +21,7 @@ from app.bot.reply_markup_safe import answer_with_inline_after_strip_reply_keybo
 from app.bot.states import DocumentStates
 from app.core.config import Settings
 from app.core.constants import MAIN_MENU_DOCUMENT
-from app.core.telegram_text import chunk_text, compact_document_title
+from app.core.telegram_text import TELEGRAM_MAX_MESSAGE_LEN, chunk_text, compact_document_title
 from app.db.models import DocumentStatus, PaymentKind, PaymentStatus, User
 from app.db.repositories import (
     ConsultationRepository,
@@ -294,6 +294,10 @@ async def _process_document_request(
 
     title_compact = compact_document_title(result.document_title.strip())
     intro = _build_document_collecting_intro(result, title_compact)
+    intro_max = TELEGRAM_MAX_MESSAGE_LEN - 96
+    if len(intro) > intro_max:
+        intro = intro[:intro_max].rstrip() + "\n\n…"
+
     qs = [q.strip() for q in result.questions if isinstance(q, str) and q.strip()]
     if not qs:
         qs = [
@@ -315,7 +319,21 @@ async def _process_document_request(
         qa_amend_mode=False,
     )
 
-    await status.edit_text(intro, parse_mode="HTML")
+    try:
+        await status.edit_text(intro, parse_mode="HTML")
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Не удалось заменить «Анализирую ваш запрос…» сводкой через edit_text (%s).",
+            exc,
+        )
+        try:
+            await status.delete()
+        except TelegramBadRequest:
+            pass
+        try:
+            await message.answer(intro, parse_mode="HTML")
+        except TelegramBadRequest as exc2:
+            logger.warning("Не отправить intro отдельным сообщением: %s", exc2)
     await message.answer(
         first_step,
         parse_mode="HTML",

@@ -31,6 +31,12 @@ async def main() -> None:
     logger = logging.getLogger(__name__)
     settings = get_settings()
     settings.validate_runtime()
+    logger.info(
+        "DeepSeek активен: model=%s timeout_s=%s base_url=%s",
+        settings.deepseek_model,
+        settings.deepseek_timeout_seconds,
+        settings.deepseek_base_url.rstrip("/"),
+    )
 
     if settings.payments_enabled:
         if not settings.telegram_native_payment_token_configured() and not settings.yookassa_configured():
