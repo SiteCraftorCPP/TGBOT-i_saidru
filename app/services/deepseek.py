@@ -591,7 +591,7 @@ class DeepSeekClient:
         max_questions: int,
     ) -> list[str]:
         """Если фильтр отрезал лишнее и список стал коротким — добиваем типовым чек-листом по договору."""
-        if sparse or len(questions) >= 6:
+        if sparse or len(questions) >= 5:
             return questions[:max_questions]
         low = request_text.lower()
         if not (self._user_wants_contract_draft(low) and not self._user_wants_litigation_route(low)):
@@ -611,7 +611,7 @@ class DeepSeekClient:
         cleaned = [q.strip() for q in result.questions if isinstance(q, str) and q.strip()]
         clarification_needed = force_neutral_title or result.clarification_needed
 
-        max_questions = 14
+        max_questions = 8
 
         if force_neutral_title:
             title = self._neutral_document_title(request_text)
@@ -659,7 +659,7 @@ class DeepSeekClient:
             "СЛУЖЕБНАЯ СТРОКА\n"
             "В конце сообщения пользователя может быть «Автоклассификатор…» — сценарный ориентир. Согласуй тематику вопросов; "
             "факты и формулировки сторон — только из текста пользователя выше этой строки.\n\n"
-            "КАК СТРОИТЬ ВОПРОСЫ (6–14 пунктов)\n"
+            "КАК СТРОИТЬ ВОПРОСЫ (5–8 пунктов, не больше)\n"
             "— Каждый вопрос — один юридически содержательный запрос: конкретный, применимый к делу; не общий «опишите ситуацию».\n"
             "— Там, где уместно, уточняй форму (ООО/ИП/физлицо), режим имущества, денежные параметры, сроки, порядок направления, приложения.\n"
             "— Для ДОГОВОРОВ: не только предмет и цена, но и типовые для этого вида блоки — сдача-приёмка, ответственность и неустойка, "
@@ -701,8 +701,8 @@ class DeepSeekClient:
                 {"role": "system", "content": self._document_questions_system_prompt()},
                 {"role": "user", "content": user_block},
             ],
-            temperature=0.21,
-            max_tokens=4608,
+            temperature=0.15,
+            max_tokens=2800,
         )
         try:
             raw = DocumentQuestionsResult.model_validate(payload)

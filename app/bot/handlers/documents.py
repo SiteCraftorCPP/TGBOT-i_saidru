@@ -40,7 +40,6 @@ from app.services.payments import (
     PAYMENTS_TURNED_OFF_USER_MESSAGE,
     PaymentService,
 )
-from app.schemas.ai import DocumentQuestionsResult
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -50,33 +49,14 @@ DOCUMENT_PROMPT = "Какой документ вам нужен? Опишите
 _MAX_READINESS_GATE_ROUNDS = 10
 
 
-def _build_document_collecting_intro(result: DocumentQuestionsResult, title_compact: str) -> str:
-    summary = (result.extracted_facts_summary or "").strip()
-    summary_block = ""
-    if summary:
-        summary_block = f"<b>Что уже понятно из вашего сообщения:</b>\n{escape(summary)}\n\n"
+def _build_document_collecting_intro(title_compact: str) -> str:
+    """Одна строка: название документа без служебных пояснений."""
     title_e = escape(title_compact)
-    if result.clarification_needed:
-        head = "<b>В запросе пока не хватает конкретики</b> — задаю уточняющие вопросы по одному.\n\n"
-    else:
-        head = ""
-    return (
-        "✅ <b>Запрос разобран.</b>\n\n"
-        f"{head}{summary_block}"
-        f"<b>Будем готовить:</b> {title_e} 📄\n\n"
-        "Бот ведёт опрос <b>последовательно</b>: один вопрос за раз, ответ — одним сообщением. "
-        "После ответов проверяется полнота сведений; при необходимости добавляются уточнения — тоже по одному. "
-        "К оформлению и генерации переходим, когда данных достаточно.\n\n"
-    )
+    return f"<b>{title_e}</b> 📄"
 
 
 def _format_qa_step_html(current: int, total: int, question: str) -> str:
-    return (
-        f"<b>Вопрос {current} из {total}</b> "
-        "<i>(ответьте сейчас только на него; следующий придёт после вашего ответа)</i>\n\n"
-        f"{escape(question.strip())}\n\n"
-        "Один ответ — <b>одним сообщением</b>. Если чего-то не знаете — так и напишите."
-    )
+    return f"<b>Вопрос {current}/{total}</b>\n\n{escape(question.strip())}"
 
 
 async def _offer_document_checkout_after_clarifications(
@@ -226,14 +206,11 @@ async def _run_readiness_gate_and_checkout(
     extra = list(assessment.follow_up_questions)[:4]
     if not assessment.ready and gate_rounds >= _MAX_READINESS_GATE_ROUNDS and not data.get("qa_sent_finale"):
         await message.answer(
-            "Дальше — <b>одно финальное сообщение</b>: соберите в нём всё критичное для документа.",
+            "<b>Последний шаг:</b> пришлите одним сообщением всё недостающее по делу.",
             parse_mode="HTML",
             reply_markup=document_questions_keyboard(),
         )
-        tail_q = (
-            "Финальное уточнение одним сообщением: стороны, регион или город, предмет документа, суммы, сроки, "
-            "реквизиты (что применимо)."
-        )
+        tail_q = "Чего не хватает для черновика: стороны, место/регион, предмет, суммы или сроки, реквизиты по смыслу."
         questions.append(tail_q)
         new_idx = len(questions) - 1
         await state.update_data(
@@ -243,7 +220,7 @@ async def _run_readiness_gate_and_checkout(
             qa_gate_rounds=gate_rounds + 1,
         )
         reason = (assessment.reason_short or "").strip()
-        reason_html = f"<i>{escape(reason)}</i>\n\n" if reason else ""
+        reason_html = f"{escape(reason)}\n\n" if reason else ""
         await message.answer(
             f"{reason_html}{_format_qa_step_html(new_idx + 1, len(questions), questions[new_idx])}",
             parse_mode="HTML",
@@ -266,7 +243,7 @@ async def _run_readiness_gate_and_checkout(
     )
 
     reason = (assessment.reason_short or "").strip()
-    reason_html = f"<b>Нужно уточнить.</b> {escape(reason)}\n\n" if reason else "<b>Нужно уточнить.</b>\n\n"
+    reason_html = f"{escape(reason)}\n\n" if reason else ""
 
     await message.answer(
         f"{reason_html}{_format_qa_step_html(new_idx + 1, len(questions), questions[new_idx])}",
@@ -294,7 +271,7 @@ async def _process_document_request(
         return
 
     title_compact = compact_document_title(result.document_title.strip())
-    intro = _build_document_collecting_intro(result, title_compact)
+    intro = _build_document_collecting_intro(title_compact)
     intro_max = TELEGRAM_MAX_MESSAGE_LEN - 96
     if len(intro) > intro_max:
         intro = intro[:intro_max].rstrip() + "\n\n…"
