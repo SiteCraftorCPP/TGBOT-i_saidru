@@ -96,6 +96,37 @@ class DynamicDocumentResult(BaseModel):
     date_and_signature: str = ""
     instruction: str = ""
 
+
+class DocumentReadinessResult(BaseModel):
+    """Проверка: достаточно ли ответов для генерации черновика документа."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ready: bool = Field(description="True — можно переходить к генерации")
+    reason_short: str = Field(
+        default="",
+        max_length=600,
+        description="Кратко по-русски: чего не хватает или почему готово",
+    )
+    follow_up_questions: list[str] = Field(
+        default_factory=list,
+        description="1–4 узких уточняющих вопроса, если ready=false",
+    )
+
+    @field_validator("follow_up_questions", mode="before")
+    @classmethod
+    def coerce_questions(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        out: list[str] = []
+        for item in value:
+            s = str(item).strip()
+            if len(s) >= 5:
+                out.append(s)
+        return out[:4]
+
 class FillResult(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     instruction: str = ""

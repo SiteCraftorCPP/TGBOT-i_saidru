@@ -7,5 +7,7 @@ class ConsultationStates(StatesGroup):
 
 class DocumentStates(StatesGroup):
     waiting_document_request = State()
+    """Пошаговый сбор ответов на уточняющие вопросы (по одному сообщению)."""
+    collecting_document_qa = State()
     waiting_document_details = State()
     confirming_generation = State()

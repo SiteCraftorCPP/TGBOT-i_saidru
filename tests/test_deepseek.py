@@ -67,3 +67,44 @@ def test_backfill_contract_adds_lease_checklist_when_thin() -> None:
     assert len(merged) >= 6
     text = " ".join(merged).lower()
     assert "залог" in text or "аренд" in text
+
+
+def test_infer_dynamic_doc_kind_lease_is_contract() -> None:
+    c = _ds()
+    k = c._infer_dynamic_document_kind(
+        "нужен договор аренды нежилого помещения",
+        "площадь 50 кв м, арендатор иванов, срок 11 месяцев",
+    )
+    assert k == "contract"
+
+
+def test_infer_dynamic_doc_kind_claim_is_litigation() -> None:
+    c = _ds()
+    k = c._infer_dynamic_document_kind(
+        "подать иск о взыскании долга по расписке",
+        "ответчик петров, сумма 100000",
+    )
+    assert k == "litigation"
+
+
+def test_sanitize_contract_strips_requests_and_bad_title() -> None:
+    from app.schemas.ai import DynamicDocumentResult
+
+    c = _ds()
+    raw = DynamicDocumentResult(
+        title="ИСКОВОЕ ЗАЯВЛЕНИЕ",
+        subtitle="о взыскании",
+        header=["В суд", "Истец:"],
+        body=["текст"],
+        requests=["1. Взыскать"],
+        attachments=[],
+        date_and_signature="",
+        instruction="",
+    )
+    fixed = c._sanitize_dynamic_document_output(
+        "contract",
+        raw,
+        "договор аренды офиса",
+    )
+    assert fixed.requests == []
+    assert "АРЕНД" in (fixed.title or "").upper() or fixed.title == "ДОГОВОР АРЕНДЫ"

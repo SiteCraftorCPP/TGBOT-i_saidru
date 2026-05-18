@@ -46,179 +46,56 @@ logger = logging.getLogger(__name__)
 
 DOCUMENT_PROMPT = (
     "Какой документ вам нужен? Опишите своими словами: "
-    "<b>кто участвует</b>, <b>что случилось</b> и <b>чего хотите добиться</b> — можно кратко, но это сильно улучшает результат. 📝\n\n"
-    "Я задам уточняющие вопросы и подготовлю документ для вас."
+    "<b>кто участвует</b>, <b>что нужно закрепить</b> — кратко или подробно.\n\n"
+    "<b>Важно:</b> после анализа бот задаёт уточнения <b>не списком</b>, а <b>по одному вопросу за раз</b> "
+    "(следующий — только после ответа на текущий). Так собирается база для черновика. "
+    "Когда цепочка пройдена, проверяется полнота сведений; только после этого — оформление и генерация. 📝"
 )
 
+_MAX_READINESS_GATE_ROUNDS = 10
 
-def _build_document_questions_html(result: DocumentQuestionsResult) -> str:
+
+def _build_document_collecting_intro(result: DocumentQuestionsResult, title_compact: str) -> str:
     summary = (result.extracted_facts_summary or "").strip()
     summary_block = ""
     if summary:
         summary_block = f"<b>Что уже понятно из вашего сообщения:</b>\n{escape(summary)}\n\n"
-
-    lines = []
-    title_compact = compact_document_title(result.document_title.strip())
     title_e = escape(title_compact)
-    for i, q in enumerate(result.questions):
-        lines.append(f"{i + 1}. {escape(q)}")
-    questions_text = "\n".join(lines)
-
     if result.clarification_needed:
-        return (
-            "<b>В запросе пока не хватает конкретики</b> — сначала задам наводящие вопросы.\n\n"
-            f"{summary_block}"
-            "<b>Ответьте на вопросы одним сообщением:</b>\n\n"
-            f"{questions_text}\n\n"
-            "Если чего‑то не знаете, так и напишите."
-        )
-
-    opener = "<b>Отлично!</b>\n\n"
-
-    return (
-        f"{opener}"
-        f"{summary_block}"
-        f"<b>Будем готовить:</b> {title_e} 📄\n\n"
-        "<b>Чтобы документ получился точным, ответьте на вопросы одним сообщением:</b>\n\n"
-        f"{questions_text}\n\n"
-        "Если чего‑то не знаете, так и напишите."
-    )
-
-
-async def _process_document_request(
-    message: Message,
-    state: FSMContext,
-    deepseek: DeepSeekClient,
-    request_text: str,
-) -> None:
-    status = await message.answer("Анализирую ваш запрос... ⏳", parse_mode=None)
-    
-    try:
-        result = await deepseek.generate_document_questions(request_text)
-    except DeepSeekError as exc:
-        await status.edit_text(f"Не удалось обработать запрос: {exc} ⚠️", parse_mode=None)
-        return
-    except Exception:
-        logger.exception("Ошибка анализа запроса документа")
-        await status.edit_text("Внутренняя ошибка. Попробуйте позже. ❌", parse_mode=None)
-        return
-
-    title_compact = compact_document_title(result.document_title.strip())
-    prompt = _build_document_questions_html(result)
-
-    await state.set_state(DocumentStates.waiting_document_details)
-    await state.update_data(
-        request_text=request_text,
-        document_title=title_compact,
-        questions_prompt_text=prompt,
-    )
-    
-    await status.edit_text(
-        prompt,
-        parse_mode="HTML",
-        reply_markup=document_questions_keyboard(),
-    )
-
-
-@router.callback_query(F.data == "menu_document")
-@router.message(F.text == MAIN_MENU_DOCUMENT)
-async def document_menu_callback(event: CallbackQuery | Message, state: FSMContext) -> None:
-    await state.clear()
-    await state.set_state(DocumentStates.waiting_document_request)
-    message = event.message if isinstance(event, CallbackQuery) else event
-    
-    if isinstance(event, Message):
-        await answer_with_inline_after_strip_reply_keyboard(
-            message,
-            DOCUMENT_PROMPT,
-            reply_markup=document_flow_start_keyboard(),
-            parse_mode="HTML",
-        )
+        head = "<b>В запросе пока не хватает конкретики</b> — задаю уточняющие вопросы по одному.\n\n"
     else:
-        await message.answer(
-            DOCUMENT_PROMPT,
-            reply_markup=document_flow_start_keyboard(),
-            parse_mode="HTML",
-        )
-        await event.answer()
-
-
-@router.message(StateFilter(DocumentStates.waiting_document_request), F.text)
-async def handle_document_request(
-    message: Message,
-    state: FSMContext,
-    deepseek: DeepSeekClient,
-) -> None:
-    await _process_document_request(message, state, deepseek, message.text.strip())
-
-
-@router.callback_query(F.data.startswith("doc_from_consult:"))
-async def document_from_consultation(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session_factory: async_sessionmaker,
-    deepseek: DeepSeekClient,
-) -> None:
-    consultation_id = int(callback.data.split(":", 1)[1])
-    async with session_factory() as session:
-        consultation = await ConsultationRepository(session).get(consultation_id)
-        if not consultation:
-            await callback.message.answer("Консультация не найдена. ❌")
-            await callback.answer()
-            return
-
-    title_hint = (
-        consultation.recommended_document
-        or consultation.document_type
-        or "документ по ситуации пользователя"
-    )
-    request_text = (
-        f"Сделай документ: {title_hint}.\n"
-        f"Исходная проблема: {consultation.problem_text}\n"
-        f"Контекст консультации: {consultation.consultation_text[:2000]}"
+        head = ""
+    return (
+        "✅ <b>Запрос разобран.</b>\n\n"
+        f"{head}{summary_block}"
+        f"<b>Будем готовить:</b> {title_e} 📄\n\n"
+        "Бот ведёт опрос <b>последовательно</b>: один вопрос за раз, ответ — одним сообщением. "
+        "После ответов проверяется полнота сведений; при необходимости добавляются уточнения — тоже по одному. "
+        "К оформлению и генерации переходим, когда данных достаточно.\n\n"
     )
 
-    await state.set_state(DocumentStates.waiting_document_request)
-    await _process_document_request(
-        callback.message,
-        state,
-        deepseek,
-        request_text,
+
+def _format_qa_step_html(current: int, total: int, question: str) -> str:
+    return (
+        f"<b>Вопрос {current} из {total}</b> "
+        "<i>(ответьте сейчас только на него; следующий придёт после вашего ответа)</i>\n\n"
+        f"{escape(question.strip())}\n\n"
+        "Один ответ — <b>одним сообщением</b>. Если чего-то не знаете — так и напишите."
     )
-    await callback.answer()
 
 
-@router.message(StateFilter(DocumentStates.waiting_document_details), F.text)
-async def handle_document_details(
+async def _offer_document_checkout_after_clarifications(
     message: Message,
     state: FSMContext,
     session_factory: async_sessionmaker,
     payment_service: PaymentService,
     settings: Settings,
+    *,
+    details_text: str,
+    request_text: str,
+    document_title: str,
 ) -> None:
-    details_text = message.text.strip()
-    data = await state.get_data()
-    document_title = data.get("document_title", "Документ")
-    request_text = data.get("request_text", "")
-
-    existing_raw = data.get("document_id")
-    if existing_raw:
-        document_id = int(existing_raw)
-        async with session_factory() as session:
-            document = await DocumentRepository(session).get(document_id)
-        if not document:
-            await message.answer("Сессия устарела. Начните оформление заново. 🔄")
-            await state.clear()
-            return
-        await state.set_state(DocumentStates.confirming_generation)
-        await state.update_data(details_text=details_text)
-        await message.answer(
-            f"Данные получены. Сформировать документ <b>{escape(str(document_title))}</b>? 📋",
-            reply_markup=confirm_generation_keyboard(),
-            parse_mode="HTML",
-        )
-        return
-
+    """Создаёт запись документа, при необходимости выставляет оплату, затем подтверждение генерации."""
     async with session_factory() as session:
         user = await UserRepository(session).get_or_create(
             telegram_id=message.from_user.id,
@@ -289,9 +166,331 @@ async def handle_document_details(
     )
 
     await message.answer(
-        f"Данные получены. Сформировать документ <b>{escape(str(document_title))}</b>? 📋",
+        f"Сведений достаточно для черновика. Сформировать документ <b>{escape(str(document_title))}</b>? 📋",
         reply_markup=confirm_generation_keyboard(),
         parse_mode="HTML",
+    )
+
+
+async def _run_readiness_gate_and_checkout(
+    message: Message,
+    state: FSMContext,
+    deepseek: DeepSeekClient,
+    session_factory: async_sessionmaker,
+    payment_service: PaymentService,
+    settings: Settings,
+) -> None:
+    """После завершения списка вопросов оценивает полноту; при готовности запускает оплату/подтверждение."""
+    data = await state.get_data()
+    request_text = (data.get("request_text") or "").strip()
+    transcript = (data.get("qa_transcript") or "").strip()
+    document_title = data.get("document_title", "Документ")
+    gate_rounds = int(data.get("qa_gate_rounds", 0))
+    questions = list(data.get("questions_queue") or [])
+
+    progress = await message.answer("Проверяю, достаточно ли данных для черновика документа... ⏳", parse_mode=None)
+    try:
+        assessment = await deepseek.assess_document_readiness(request_text, transcript)
+    except DeepSeekError as exc:
+        await progress.edit_text(f"Не удалось проверить полноту данных: {exc} ⚠️", parse_mode=None)
+        return
+
+    if assessment.ready:
+        await progress.delete()
+        await _offer_document_checkout_after_clarifications(
+            message,
+            state,
+            session_factory,
+            payment_service,
+            settings,
+            details_text=transcript,
+            request_text=request_text,
+            document_title=str(document_title),
+        )
+        return
+
+    await progress.delete()
+
+    if not assessment.ready and data.get("qa_sent_finale"):
+        note = (
+            "\n\nПримечание для генерации (по ответам данных всё ещё может не хватать): "
+            + (assessment.reason_short or "").strip()
+        )
+        await _offer_document_checkout_after_clarifications(
+            message,
+            state,
+            session_factory,
+            payment_service,
+            settings,
+            details_text=(transcript + note).strip(),
+            request_text=request_text,
+            document_title=str(document_title),
+        )
+        return
+
+    extra = list(assessment.follow_up_questions)[:4]
+    if not assessment.ready and gate_rounds >= _MAX_READINESS_GATE_ROUNDS and not data.get("qa_sent_finale"):
+        await message.answer(
+            "Дальше — <b>одно финальное сообщение</b>: соберите в нём всё критичное для документа.",
+            parse_mode="HTML",
+            reply_markup=document_questions_keyboard(),
+        )
+        tail_q = (
+            "Финальное уточнение одним сообщением: стороны, регион или город, предмет документа, суммы, сроки, "
+            "реквизиты (что применимо)."
+        )
+        questions.append(tail_q)
+        new_idx = len(questions) - 1
+        await state.update_data(
+            questions_queue=questions,
+            qa_index=new_idx,
+            qa_sent_finale=True,
+            qa_gate_rounds=gate_rounds + 1,
+        )
+        reason = (assessment.reason_short or "").strip()
+        reason_html = f"<i>{escape(reason)}</i>\n\n" if reason else ""
+        await message.answer(
+            f"{reason_html}{_format_qa_step_html(new_idx + 1, len(questions), questions[new_idx])}",
+            parse_mode="HTML",
+            reply_markup=document_questions_keyboard(),
+        )
+        return
+
+    if not extra:
+        extra = [
+            "Кратко одним сообщением перечислите недостающие сведения (что ещё важно для этого документа).",
+        ]
+
+    old_len = len(questions)
+    questions.extend(extra)
+    new_idx = old_len
+    await state.update_data(
+        questions_queue=questions,
+        qa_index=new_idx,
+        qa_gate_rounds=gate_rounds + 1,
+    )
+
+    reason = (assessment.reason_short or "").strip()
+    reason_html = f"<b>Нужно уточнить.</b> {escape(reason)}\n\n" if reason else "<b>Нужно уточнить.</b>\n\n"
+
+    await message.answer(
+        f"{reason_html}{_format_qa_step_html(new_idx + 1, len(questions), questions[new_idx])}",
+        parse_mode="HTML",
+        reply_markup=document_questions_keyboard(),
+    )
+
+
+async def _process_document_request(
+    message: Message,
+    state: FSMContext,
+    deepseek: DeepSeekClient,
+    request_text: str,
+) -> None:
+    status = await message.answer("Анализирую ваш запрос... ⏳", parse_mode=None)
+
+    try:
+        result = await deepseek.generate_document_questions(request_text)
+    except DeepSeekError as exc:
+        await status.edit_text(f"Не удалось обработать запрос: {exc} ⚠️", parse_mode=None)
+        return
+    except Exception:
+        logger.exception("Ошибка анализа запроса документа")
+        await status.edit_text("Внутренняя ошибка. Попробуйте позже. ❌", parse_mode=None)
+        return
+
+    title_compact = compact_document_title(result.document_title.strip())
+    intro = _build_document_collecting_intro(result, title_compact)
+    qs = [q.strip() for q in result.questions if isinstance(q, str) and q.strip()]
+    if not qs:
+        qs = [
+            "Какой именно документ нужен и в каком населённом пункте или регионе он будет использоваться "
+            "(если это важно для текста)?",
+        ]
+    total = len(qs)
+    first_step = _format_qa_step_html(1, total, qs[0])
+
+    await state.set_state(DocumentStates.collecting_document_qa)
+    await state.update_data(
+        request_text=request_text,
+        document_title=title_compact,
+        questions_prompt_text=intro,
+        questions_queue=qs,
+        qa_index=0,
+        qa_transcript="",
+        qa_gate_rounds=0,
+        qa_amend_mode=False,
+    )
+
+    await status.edit_text(intro, parse_mode="HTML")
+    await message.answer(
+        first_step,
+        parse_mode="HTML",
+        reply_markup=document_questions_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "menu_document")
+@router.message(F.text == MAIN_MENU_DOCUMENT)
+async def document_menu_callback(event: CallbackQuery | Message, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(DocumentStates.waiting_document_request)
+    message = event.message if isinstance(event, CallbackQuery) else event
+    
+    if isinstance(event, Message):
+        await answer_with_inline_after_strip_reply_keyboard(
+            message,
+            DOCUMENT_PROMPT,
+            reply_markup=document_flow_start_keyboard(),
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            DOCUMENT_PROMPT,
+            reply_markup=document_flow_start_keyboard(),
+            parse_mode="HTML",
+        )
+        await event.answer()
+
+
+@router.message(StateFilter(DocumentStates.waiting_document_request), F.text)
+async def handle_document_request(
+    message: Message,
+    state: FSMContext,
+    deepseek: DeepSeekClient,
+) -> None:
+    await _process_document_request(message, state, deepseek, message.text.strip())
+
+
+@router.message(StateFilter(DocumentStates.collecting_document_qa), F.text)
+async def handle_collecting_document_qa(
+    message: Message,
+    state: FSMContext,
+    deepseek: DeepSeekClient,
+    session_factory: async_sessionmaker,
+    payment_service: PaymentService,
+    settings: Settings,
+) -> None:
+    data = await state.get_data()
+    reply = message.text.strip()
+    questions = list(data.get("questions_queue") or [])
+
+    if data.get("qa_amend_mode"):
+        await state.update_data(qa_amend_mode=False)
+        transcript_prev = (data.get("qa_transcript") or "").strip()
+        transcript = transcript_prev + "\n\nДополнение (редактирование):\n" + reply + "\n"
+        await state.update_data(qa_transcript=transcript.strip())
+        await _run_readiness_gate_and_checkout(
+            message,
+            state,
+            deepseek,
+            session_factory,
+            payment_service,
+            settings,
+        )
+        return
+
+    idx = int(data.get("qa_index", 0))
+    if idx >= len(questions):
+        await message.answer("Сессия оформления сбилась. Начните документ заново из меню. 🔄", parse_mode=None)
+        return
+
+    current_q = questions[idx]
+    block = f"Вопрос: {current_q}\nОтвет: {reply}\n"
+    transcript = ((data.get("qa_transcript") or "").strip() + "\n\n" + block).strip()
+    idx += 1
+    await state.update_data(qa_transcript=transcript, qa_index=idx)
+
+    if idx < len(questions):
+        step = _format_qa_step_html(idx + 1, len(questions), questions[idx])
+        await message.answer(step, parse_mode="HTML", reply_markup=document_questions_keyboard())
+        return
+
+    await _run_readiness_gate_and_checkout(
+        message,
+        state,
+        deepseek,
+        session_factory,
+        payment_service,
+        settings,
+    )
+
+
+@router.callback_query(F.data.startswith("doc_from_consult:"))
+async def document_from_consultation(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session_factory: async_sessionmaker,
+    deepseek: DeepSeekClient,
+) -> None:
+    consultation_id = int(callback.data.split(":", 1)[1])
+    async with session_factory() as session:
+        consultation = await ConsultationRepository(session).get(consultation_id)
+        if not consultation:
+            await callback.message.answer("Консультация не найдена. ❌")
+            await callback.answer()
+            return
+
+    title_hint = (
+        consultation.recommended_document
+        or consultation.document_type
+        or "документ по ситуации пользователя"
+    )
+    request_text = (
+        f"Сделай документ: {title_hint}.\n"
+        f"Исходная проблема: {consultation.problem_text}\n"
+        f"Контекст консультации: {consultation.consultation_text[:2000]}"
+    )
+
+    await state.set_state(DocumentStates.waiting_document_request)
+    await _process_document_request(
+        callback.message,
+        state,
+        deepseek,
+        request_text,
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(DocumentStates.waiting_document_details), F.text)
+async def handle_document_details(
+    message: Message,
+    state: FSMContext,
+    session_factory: async_sessionmaker,
+    payment_service: PaymentService,
+    settings: Settings,
+) -> None:
+    details_text = message.text.strip()
+    data = await state.get_data()
+    document_title = data.get("document_title", "Документ")
+    request_text = data.get("request_text", "")
+
+    existing_raw = data.get("document_id")
+    if existing_raw:
+        document_id = int(existing_raw)
+        async with session_factory() as session:
+            document = await DocumentRepository(session).get(document_id)
+        if not document:
+            await message.answer("Сессия устарела. Начните оформление заново. 🔄")
+            await state.clear()
+            return
+        await state.set_state(DocumentStates.confirming_generation)
+        await state.update_data(details_text=details_text)
+        await message.answer(
+            f"Данные получены. Сформировать документ <b>{escape(str(document_title))}</b>? 📋",
+            reply_markup=confirm_generation_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    await _offer_document_checkout_after_clarifications(
+        message,
+        state,
+        session_factory,
+        payment_service,
+        settings,
+        details_text=details_text,
+        request_text=request_text,
+        document_title=str(document_title),
     )
 
 
@@ -404,7 +603,10 @@ async def pay_done_continue(
     await callback.answer()
 
 
-@router.callback_query(StateFilter(DocumentStates.waiting_document_details), F.data == "document_back_request")
+@router.callback_query(
+    StateFilter(DocumentStates.collecting_document_qa, DocumentStates.waiting_document_details),
+    F.data == "document_back_request",
+)
 async def document_back_request(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(DocumentStates.waiting_document_request)
     await state.update_data(
@@ -412,6 +614,12 @@ async def document_back_request(callback: CallbackQuery, state: FSMContext) -> N
         questions_prompt_text=None,
         request_text=None,
         document_id=None,
+        questions_queue=None,
+        qa_index=None,
+        qa_transcript=None,
+        qa_gate_rounds=None,
+        qa_amend_mode=None,
+        qa_sent_finale=None,
     )
     await callback.message.edit_text(
         DOCUMENT_PROMPT,
@@ -426,10 +634,28 @@ async def document_back_details(callback: CallbackQuery, state: FSMContext) -> N
     data = await state.get_data()
     prompt = data.get("questions_prompt_text")
     document_title = data.get("document_title", "Документ")
+    transcript = (data.get("qa_transcript") or "").strip()
+
+    if transcript:
+        await state.set_state(DocumentStates.collecting_document_qa)
+        await state.update_data(qa_amend_mode=True)
+        tr_disp = transcript[-3000:] if len(transcript) > 3000 else transcript
+        body = (
+            f"<b>Редактирование данных</b> — «{escape(str(document_title))}».\n\n"
+            f"<b>Собрано:</b>\n{escape(tr_disp)}\n\n"
+            "Пришлите <b>одним сообщением</b>, что добавить или уточнить. После этого снова проверю полноту сведений."
+        )
+        await callback.message.edit_text(
+            body,
+            parse_mode="HTML",
+            reply_markup=document_questions_keyboard(),
+        )
+        await callback.answer()
+        return
+
     if not prompt:
         prompt = (
-            f"Ответьте на уточняющие вопросы одним сообщением по документу "
-            f"<b>{escape(str(document_title))}</b>. 📝"
+            f"Уточните данные по документу <b>{escape(str(document_title))}</b>. 📝"
         )
     await state.set_state(DocumentStates.waiting_document_details)
     await callback.message.edit_text(
