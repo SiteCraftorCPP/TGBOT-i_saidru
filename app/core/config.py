@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     deepseek_api_keys: str = Field(default="", alias="DEEPSEEK_API_KEYS")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
-    deepseek_timeout_seconds: int = Field(default=45, alias="DEEPSEEK_TIMEOUT_SECONDS")
+    deepseek_timeout_seconds: int = Field(default=90, alias="DEEPSEEK_TIMEOUT_SECONDS")
     deepseek_temperature: float = Field(default=0.2, alias="DEEPSEEK_TEMPERATURE")
 
     database_url: str = Field(

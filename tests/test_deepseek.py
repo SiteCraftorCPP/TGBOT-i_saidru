@@ -1,10 +1,18 @@
 from app.schemas.ai import ConsultationResult, FillResult
-from app.services.deepseek import DeepSeekClient
+from app.services.deepseek import DeepSeekClient, _parse_json_object_content
 from app.core.config import Settings
 
 
 def _ds() -> DeepSeekClient:
     return DeepSeekClient(Settings())
+
+
+def test_parse_json_object_content_accepts_fence_and_surrounding_text() -> None:
+    assert _parse_json_object_content('```json\n{"document_title":"x","questions":[],"clarification_needed":false,"extracted_facts_summary":""}\n```')[
+        "document_title"
+    ] == "x"
+    wrapped = 'Ответ:\n{"a": true}\nхвост'
+    assert _parse_json_object_content(wrapped)["a"] is True
 
 
 def test_consultation_schema_accepts_expected_json() -> None:
