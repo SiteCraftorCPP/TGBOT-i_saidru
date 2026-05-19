@@ -172,7 +172,10 @@ async def _run_readiness_gate_and_checkout(
     gate_rounds = int(data.get("qa_gate_rounds", 0))
     questions = list(data.get("questions_queue") or [])
 
-    progress = await message.answer("Проверяю, достаточно ли данных для черновика документа... ⏳", parse_mode=None)
+    progress = await message.answer(
+        "Проверяю, достаточно ли данных для формирования документа... ⏳",
+        parse_mode=None,
+    )
     try:
         assessment = await deepseek.assess_document_readiness(request_text, transcript)
     except DeepSeekError as exc:
