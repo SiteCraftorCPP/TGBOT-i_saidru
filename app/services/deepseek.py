@@ -303,12 +303,23 @@ class DeepSeekClient:
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        read_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self.settings.deepseek_api_keys_list:
             raise DeepSeekError("DEEPSEEK_API_KEYS не заполнен")
 
         temp = self.settings.deepseek_temperature if temperature is None else temperature
         errors: list[str] = []
+
+        read_sec = float(
+            read_seconds if read_seconds is not None else max(30, self.settings.deepseek_timeout_seconds)
+        )
+        request_timeout = httpx.Timeout(
+            connect=20.0,
+            read=read_sec,
+            write=min(max(read_sec, 60.0), 300.0),
+            pool=30.0,
+        )
 
         base: dict[str, Any] = {
             "model": self.settings.deepseek_model,
@@ -320,8 +331,9 @@ class DeepSeekClient:
             base["max_tokens"] = max_tokens
 
         n_keys = len(self.settings.deepseek_api_keys_list)
-        # Ответ уже пришёл (HTTP 200), но модель порвала/испачкала JSON — это не ошибка «ключа»: повторяем тем же ключом.
+        # Ответ уже пришёл (HTTP 200), но модель порвала/испачкала JSON — повторяем тем же ключом.
         same_key_decode_attempts = 3
+        same_key_read_retries = 3
 
         for key_attempt in range(1, n_keys + 1):
             api_key = next(self._keys)
@@ -331,14 +343,65 @@ class DeepSeekClient:
 
             for decode_try in range(1, same_key_decode_attempts + 1):
                 finish_reason: str | None = None
+                jr: dict[str, Any] | None = None
+
+                read_timeout_fatal = False
+                for net_try in range(1, same_key_read_retries + 1):
+                    try:
+                        response = await self._http.post(
+                            "/chat/completions",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            json=outbound,
+                            timeout=request_timeout,
+                        )
+                        response.raise_for_status()
+                        jr = response.json()
+                        break
+                    except httpx.HTTPStatusError as exc:
+                        code = exc.response.status_code
+                        errors.append(f"HTTP_{code}")
+                        logger.warning(
+                            "DeepSeek ключ %s/%s: HTTP %s — переключаюсь на следующий ключ",
+                            key_attempt,
+                            n_keys,
+                            code,
+                        )
+                        bail_http = True
+                        break
+                    except httpx.ReadTimeout as exc:
+                        logger.warning(
+                            "DeepSeek ключ %s/%s: ReadTimeout чтения (%ss, попытка сети %s/%s, тот же ключ)",
+                            key_attempt,
+                            n_keys,
+                            int(read_sec),
+                            net_try,
+                            same_key_read_retries,
+                        )
+                        if net_try >= same_key_read_retries:
+                            errors.append(f"ReadTimeout×{same_key_read_retries}")
+                            read_timeout_fatal = True
+                        # иначе повтор той же попытки
+                    except httpx.RequestError as exc:
+                        errors.append(f"{type(exc).__name__}:{exc!r}")
+                        logger.warning(
+                            "DeepSeek ключ %s/%s: транспорт %s — следующий ключ",
+                            key_attempt,
+                            n_keys,
+                            type(exc).__name__,
+                        )
+                        bail_http = True
+                        break
+
+                if bail_http:
+                    break
+                if read_timeout_fatal:
+                    bail_http = True
+                    break
+                if jr is None:
+                    bail_http = True
+                    break
+
                 try:
-                    response = await self._http.post(
-                        "/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        json=outbound,
-                    )
-                    response.raise_for_status()
-                    jr = response.json()
                     choice0 = jr["choices"][0]
                     finish_reason = choice0.get("finish_reason")
                     msg = choice0.get("message") or {}
@@ -346,37 +409,6 @@ class DeepSeekClient:
                     if content_raw is None or (isinstance(content_raw, str) and not content_raw.strip()):
                         raise KeyError("empty message content")
                     return _parse_json_object_content(str(content_raw))
-                except httpx.HTTPStatusError as exc:
-                    code = exc.response.status_code
-                    errors.append(f"HTTP_{code}")
-                    logger.warning(
-                        "DeepSeek ключ %s/%s: HTTP %s — переключаюсь на следующий ключ",
-                        key_attempt,
-                        n_keys,
-                        code,
-                    )
-                    bail_http = True
-                    break
-                except httpx.ReadTimeout as exc:
-                    errors.append(f"ReadTimeout:{exc!s}")
-                    logger.warning(
-                        "DeepSeek ключ %s/%s: таймаут чтения (~%ss) — следующий ключ",
-                        key_attempt,
-                        n_keys,
-                        max(15, self.settings.deepseek_timeout_seconds),
-                    )
-                    bail_http = True
-                    break
-                except httpx.RequestError as exc:
-                    errors.append(f"{type(exc).__name__}:{exc!s}")
-                    logger.warning(
-                        "DeepSeek ключ %s/%s: транспорт %s — следующий ключ",
-                        key_attempt,
-                        n_keys,
-                        type(exc).__name__,
-                    )
-                    bail_http = True
-                    break
                 except (KeyError, json.JSONDecodeError, TypeError) as exc:
                     decode_problem_tags.append(type(exc).__name__)
                     logger.warning(
@@ -934,6 +966,7 @@ class DeepSeekClient:
             ],
             temperature=0.14,
             max_tokens=8192,
+            read_seconds=float(max(120, self.settings.deepseek_generation_timeout_seconds)),
         )
         try:
             raw = DynamicDocumentResult.model_validate(payload)

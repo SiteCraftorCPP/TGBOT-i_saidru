@@ -32,9 +32,10 @@ async def main() -> None:
     settings = get_settings()
     settings.validate_runtime()
     logger.info(
-        "DeepSeek активен: model=%s timeout_s=%s base_url=%s",
+        "DeepSeek активен: model=%s timeout_s=%s generation_timeout_s=%s base_url=%s",
         settings.deepseek_model,
         settings.deepseek_timeout_seconds,
+        settings.deepseek_generation_timeout_seconds,
         settings.deepseek_base_url.rstrip("/"),
     )
 

@@ -49,6 +49,15 @@ DOCUMENT_PROMPT = "Какой документ вам нужен? Опишите
 _MAX_READINESS_GATE_ROUNDS = 10
 
 
+def _explain_generation_deepseek_failure(exc: DeepSeekError) -> str:
+    """Короткое сообщение в Telegram без внутренних цепочек ошибок."""
+    low = str(exc).lower()
+    if "readtimeout" in low or "таймаут" in low:
+        return (
+            "Генерация не уложилась во время ответа от ИИ-сервиса (большой объём текста или сеть). "
+            "Попробуйте через минуту; при повторении увеличьте DEEPSEEK_GENERATION_TIMEOUT_SECONDS на сервере."
+        )
+    return str(exc)
 def _build_document_collecting_intro(title_compact: str) -> str:
     """Одна строка: название документа без служебных пояснений."""
     title_e = escape(title_compact)
@@ -714,7 +723,7 @@ async def generate_document(
                 await documents.update_status(document, DocumentStatus.PAID)
                 await session.commit()
         await progress.edit_text(
-            f"Не удалось сгенерировать документ: {exc} ⚠️",
+            f"Не удалось сгенерировать документ. {_explain_generation_deepseek_failure(exc)} ⚠️",
             parse_mode=None,
         )
         await callback.answer()

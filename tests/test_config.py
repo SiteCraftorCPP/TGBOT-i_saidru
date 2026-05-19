@@ -36,6 +36,11 @@ def test_provider_token_survives_utf8_bom_prefix() -> None:
     assert s.telegram_native_payment_token_configured() is True
 
 
+def test_deepseek_generation_timeout_default() -> None:
+    s = Settings(BOT_TOKEN="t", DEEPSEEK_API_KEYS="k")
+    assert s.deepseek_generation_timeout_seconds >= 120
+
+
 def test_deepseek_model_strips_spaces() -> None:
     s = Settings(
         BOT_TOKEN="t",
@@ -43,7 +48,6 @@ def test_deepseek_model_strips_spaces() -> None:
         DEEPSEEK_MODEL="  deepseek-v4-pro ",
     )
     assert s.deepseek_model == "deepseek-v4-pro"
-
 
 def test_telegram_provider_token_optional() -> None:
     empty = Settings(BOT_TOKEN="t", DEEPSEEK_API_KEYS="k")

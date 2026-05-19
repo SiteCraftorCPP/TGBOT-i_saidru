@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     deepseek_timeout_seconds: int = Field(default=90, alias="DEEPSEEK_TIMEOUT_SECONDS")
+    deepseek_generation_timeout_seconds: int = Field(
+        default=300,
+        alias="DEEPSEEK_GENERATION_TIMEOUT_SECONDS",
+        description="Таймаут чтения ответа именно для тяжёлой генерации динамического документа (до max_tokens порядка тысяч).",
+    )
     deepseek_temperature: float = Field(default=0.2, alias="DEEPSEEK_TEMPERATURE")
 
     database_url: str = Field(
