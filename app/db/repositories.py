@@ -37,9 +37,12 @@ class UserRepository:
         await self.session.execute(delete(User).where(User.telegram_id == telegram_id))
         await self.session.flush()
 
-    async def count_all(self) -> int:
-        """Сколько строк в users (все, кто хотя бы раз зашёл через /start или сценарий с созданием пользователя)."""
-        r = await self.session.execute(select(func.count()).select_from(User))
+    async def count_all(self, *, exclude_telegram_ids: Sequence[int] | None = None) -> int:
+        """Сколько строк в users; при exclude_telegram_ids — без этих Telegram id (например админы)."""
+        stmt = select(func.count()).select_from(User)
+        if exclude_telegram_ids:
+            stmt = stmt.where(User.telegram_id.notin_(tuple(exclude_telegram_ids)))
+        r = await self.session.execute(stmt)
         return int(r.scalar_one() or 0)
 
     async def extend_subscription_month(self, user: User) -> None:
@@ -214,26 +217,55 @@ class PaymentRepository:
     async def flush(self) -> None:
         await self.session.flush()
 
-    async def count_completed_by_kind(self) -> tuple[int, int]:
+    async def count_completed_by_kind(
+        self, *, exclude_telegram_ids: Sequence[int] | None = None
+    ) -> tuple[int, int]:
         """
         Количество строк payments со статусом paid по виду платежа.
-        Это сумма успешных транзакций (один человек может внести несколько платежей за документы).
+        Исключает платежи пользователей из exclude_telegram_ids (админы не учитываются).
         """
         st = PaymentStatus.PAID.value
-        q_doc = await self.session.execute(
-            select(func.count())
-            .select_from(Payment)
-            .where(Payment.status == st, Payment.payment_kind == PaymentKind.DOCUMENT.value)
-        )
-        q_sub = await self.session.execute(
-            select(func.count())
-            .select_from(Payment)
-            .where(Payment.status == st, Payment.payment_kind == PaymentKind.SUBSCRIPTION.value)
-        )
+
+        def base_doc():
+            q = (
+                select(func.count())
+                .select_from(Payment)
+                .join(User, Payment.user_id == User.id)
+                .where(
+                    Payment.status == st,
+                    Payment.payment_kind == PaymentKind.DOCUMENT.value,
+                )
+            )
+            if exclude_telegram_ids:
+                q = q.where(User.telegram_id.notin_(tuple(exclude_telegram_ids)))
+            return q
+
+        def base_sub():
+            q = (
+                select(func.count())
+                .select_from(Payment)
+                .join(User, Payment.user_id == User.id)
+                .where(
+                    Payment.status == st,
+                    Payment.payment_kind == PaymentKind.SUBSCRIPTION.value,
+                )
+            )
+            if exclude_telegram_ids:
+                q = q.where(User.telegram_id.notin_(tuple(exclude_telegram_ids)))
+            return q
+
+        q_doc = await self.session.execute(base_doc())
+        q_sub = await self.session.execute(base_sub())
         return int(q_doc.scalar_one() or 0), int(q_sub.scalar_one() or 0)
 
-    async def list_buyers_who_paid(self, *, offset: int = 0, limit: int = 10) -> tuple[list[PaidBuyerRow], int]:
-        """Один пользователь — одна строка: его последний (по дате) платёж со статусом paid."""
+    async def list_buyers_who_paid(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 10,
+        exclude_telegram_ids: Sequence[int] | None = None,
+    ) -> tuple[list[PaidBuyerRow], int]:
+        """Один пользователь — одна строка: его последний (по дате) платёж со статусом paid (без админов)."""
         paid_statuses = (PaymentStatus.PAID.value,)
 
         rn = func.row_number().over(
@@ -241,7 +273,7 @@ class PaymentRepository:
             order_by=Payment.created_at.desc(),
         ).label("rn")
 
-        ranked = (
+        ranked_sel = (
             select(
                 Payment.user_id,
                 Payment.document_id,
@@ -252,9 +284,13 @@ class PaymentRepository:
                 Payment.created_at,
                 rn,
             )
+            .join(User, Payment.user_id == User.id)
             .where(Payment.status.in_(paid_statuses))
-            .subquery("ranked")
         )
+        if exclude_telegram_ids:
+            ranked_sel = ranked_sel.where(User.telegram_id.notin_(tuple(exclude_telegram_ids)))
+
+        ranked = ranked_sel.subquery("ranked")
 
         latest = (
             select(

@@ -45,12 +45,10 @@ def _build_admin_message(
 ) -> str:
     lines = [
         "Панель администратора 📊",
-        f"Пользователей в базе (записей users): {users_total}",
-        "Ниже — число успешных транзакций (статус paid в базе):",
+        f"Пользователей: {users_total}",
+        "Ниже — число успешных транзакций:",
         f" • оплат за документы: {payments_doc}",
         f" • оплат подписки: {payments_sub}",
-        "Дальше список людей у которых хотя бы один платёж paid;",
-        "для каждого показывают последнюю успешную оплату.",
     ]
     if list_total > page_size:
         total_pages = max(1, (list_total + page_size - 1) // page_size)
@@ -65,7 +63,7 @@ def _build_admin_message(
 
     base = page * page_size
     body = [_fmt_row_line(base + i + 1, r) for i, r in enumerate(rows)]
-    return f"{header}\n\n" + "\n".join(body)
+    return f"{header}\n\nУспешные оплаты:\n\n" + "\n".join(body)
 
 
 router = Router()
@@ -81,12 +79,22 @@ async def cmd_admin(
         await message.answer("Нет доступа. 🚫")
         return
 
+    exclude_admins = settings.admin_ids_list or []
+
     async with session_factory() as session:
         users_repo = UserRepository(session)
-        users_total = await users_repo.count_all()
+        users_total = await users_repo.count_all(
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
         pays = PaymentRepository(session)
-        doc_n, sub_n = await pays.count_completed_by_kind()
-        rows, total = await pays.list_buyers_who_paid(offset=0, limit=PAGE_SIZE)
+        doc_n, sub_n = await pays.count_completed_by_kind(
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
+        rows, total = await pays.list_buyers_who_paid(
+            offset=0,
+            limit=PAGE_SIZE,
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
 
     text = _build_admin_message(
         rows=rows,
@@ -120,22 +128,40 @@ async def admin_buyers_page(
 
     page_req = max(0, page_req)
 
+    exclude_admins = settings.admin_ids_list or []
+
     async with session_factory() as session:
         users_repo = UserRepository(session)
-        users_total = await users_repo.count_all()
+        users_total = await users_repo.count_all(
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
         pays = PaymentRepository(session)
-        doc_n, sub_n = await pays.count_completed_by_kind()
-        rows, total = await pays.list_buyers_who_paid(offset=page_req * PAGE_SIZE, limit=PAGE_SIZE)
+        doc_n, sub_n = await pays.count_completed_by_kind(
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
+        rows, total = await pays.list_buyers_who_paid(
+            offset=page_req * PAGE_SIZE,
+            limit=PAGE_SIZE,
+            exclude_telegram_ids=exclude_admins if exclude_admins else None,
+        )
 
     max_page = max(0, (total - 1) // PAGE_SIZE) if total else 0
     if total and page_req > max_page:
         page_req = max_page
         async with session_factory() as session:
             users_repo = UserRepository(session)
-            users_total = await users_repo.count_all()
+            users_total = await users_repo.count_all(
+                exclude_telegram_ids=exclude_admins if exclude_admins else None,
+            )
             pays = PaymentRepository(session)
-            doc_n, sub_n = await pays.count_completed_by_kind()
-            rows, total = await pays.list_buyers_who_paid(offset=page_req * PAGE_SIZE, limit=PAGE_SIZE)
+            doc_n, sub_n = await pays.count_completed_by_kind(
+                exclude_telegram_ids=exclude_admins if exclude_admins else None,
+            )
+            rows, total = await pays.list_buyers_who_paid(
+                offset=page_req * PAGE_SIZE,
+                limit=PAGE_SIZE,
+                exclude_telegram_ids=exclude_admins if exclude_admins else None,
+            )
 
     text = _build_admin_message(
         rows=rows,
