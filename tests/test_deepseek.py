@@ -45,6 +45,27 @@ def test_fill_schema_accepts_values_and_instruction() -> None:
     assert result.values["fio"] == "Иванов Иван"
 
 
+def test_ordered_api_keys_none_keeps_config_order() -> None:
+    keys = ["a", "b", "c"]
+    assert DeepSeekClient._ordered_api_keys(keys, None) == keys
+
+
+def test_ordered_api_keys_stable_per_user() -> None:
+    keys = ["k0", "k1", "k2", "k3"]
+    uid = 77100988773
+    a = DeepSeekClient._ordered_api_keys(keys, uid)
+    b = DeepSeekClient._ordered_api_keys(keys, uid)
+    assert a == b
+    assert set(a) == set(keys)
+
+
+def test_ordered_api_keys_is_permutation_for_various_ids() -> None:
+    keys = ["k0", "k1", "k2"]
+    for uid in (1, 2, 999_999_999_991):
+        o = DeepSeekClient._ordered_api_keys(keys, uid)
+        assert sorted(o) == sorted(keys)
+
+
 def test_filter_drops_litigation_smells_for_pure_contract() -> None:
     c = _ds()
     qs = [

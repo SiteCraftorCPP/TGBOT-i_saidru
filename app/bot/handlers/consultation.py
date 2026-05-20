@@ -35,7 +35,7 @@ async def handle_problem(
 
     status = await message.answer("Разбираю ситуацию... ⏳")
     try:
-        result = await deepseek.consult(problem_text, catalog.all())
+        result = await deepseek.consult(problem_text, catalog.all(), telegram_id=message.from_user.id)
     except DeepSeekError as exc:
         await status.edit_text(f"Не смог получить консультацию: {exc}", parse_mode=None)
         return

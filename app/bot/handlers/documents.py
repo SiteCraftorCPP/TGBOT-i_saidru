@@ -177,7 +177,9 @@ async def _run_readiness_gate_and_checkout(
         parse_mode=None,
     )
     try:
-        assessment = await deepseek.assess_document_readiness(request_text, transcript)
+        assessment = await deepseek.assess_document_readiness(
+            request_text, transcript, telegram_id=message.from_user.id
+        )
     except DeepSeekError as exc:
         await progress.edit_text(f"Не удалось проверить полноту данных: {exc} ⚠️", parse_mode=None)
         return
@@ -273,7 +275,9 @@ async def _process_document_request(
     status = await message.answer("Анализирую ваш запрос... ⏳", parse_mode=None)
 
     try:
-        result = await deepseek.generate_document_questions(request_text)
+        result = await deepseek.generate_document_questions(
+            request_text, telegram_id=message.from_user.id
+        )
     except DeepSeekError as exc:
         await status.edit_text(f"Не удалось обработать запрос: {exc} ⚠️", parse_mode=None)
         return
@@ -717,6 +721,7 @@ async def generate_document(
             document_id=document_id,
             request_text=request_text,
             details_text=details_text,
+            telegram_user_id=callback.from_user.id if callback.from_user else None,
         )
     except DeepSeekError as exc:
         async with session_factory() as session:

@@ -23,8 +23,9 @@ class DocumentGenerator:
         document_id: int,
         template: TemplateMeta,
         raw_answers: dict[str, str],
+        telegram_user_id: int | None = None,
     ) -> tuple[dict[str, Any], str, str, Path, Path | None]:
-        fill = await self.deepseek.normalize_answers(template, raw_answers)
+        fill = await self.deepseek.normalize_answers(template, raw_answers, telegram_id=telegram_user_id)
         values = {field.key: fill.values.get(field.key, "") for field in template.fields}
         document_text = self.render_text(template, values)
 
@@ -52,12 +53,15 @@ class DocumentGenerator:
         document_id: int,
         request_text: str,
         details_text: str,
+        telegram_user_id: int | None = None,
     ) -> tuple[str, str, Path, Path | None]:
         from docx import Document
         from docx.shared import Pt, Cm
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         
-        result = await self.deepseek.generate_dynamic_document(request_text, details_text)
+        result = await self.deepseek.generate_dynamic_document(
+            request_text, details_text, telegram_id=telegram_user_id
+        )
         instruction = result.instruction
 
         output_dir = self.settings.storage_dir / str(document_id)

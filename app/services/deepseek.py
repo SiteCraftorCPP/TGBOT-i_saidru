@@ -1,8 +1,8 @@
+import hashlib
 import json
 import logging
 import re
 from collections.abc import Sequence
-from itertools import cycle
 from typing import Any
 
 import httpx
@@ -237,8 +237,17 @@ _PERSONAL_DATA_FORM_QUESTION_NOISE = re.compile(
 class DeepSeekClient:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._keys = cycle(settings.deepseek_api_keys_list or [""])
         self._client: httpx.AsyncClient | None = None
+
+    @staticmethod
+    def _ordered_api_keys(keys: Sequence[str], telegram_id: int | None) -> list[str]:
+        """Порядок ключей для запроса: при telegram_id — «свой» ключ первым (стабильно по id), иначе как в конфиге."""
+        lst = list(keys)
+        if telegram_id is None or not lst:
+            return lst
+        digest = hashlib.sha256(str(int(telegram_id)).encode()).hexdigest()
+        start = int(digest[:16], 16) % len(lst)
+        return lst[start:] + lst[:start]
 
     @property
     def _http(self) -> httpx.AsyncClient:
@@ -259,7 +268,13 @@ class DeepSeekClient:
             await self._client.aclose()
             self._client = None
 
-    async def consult(self, problem_text: str, templates: list[TemplateMeta]) -> ConsultationResult:
+    async def consult(
+        self,
+        problem_text: str,
+        templates: list[TemplateMeta],
+        *,
+        telegram_id: int | None = None,
+    ) -> ConsultationResult:
         template_hint = "\n".join(
             f"- {template.document_type}: {template.title} ({template.category})"
             for template in templates
@@ -268,7 +283,8 @@ class DeepSeekClient:
             [
                 {"role": "system", "content": self._consult_system_prompt(template_hint)},
                 {"role": "user", "content": problem_text},
-            ]
+            ],
+            telegram_id=telegram_id,
         )
         try:
             return ConsultationResult.model_validate(payload)
@@ -279,12 +295,15 @@ class DeepSeekClient:
         self,
         template: TemplateMeta,
         raw_answers: dict[str, str],
+        *,
+        telegram_id: int | None = None,
     ) -> FillResult:
         payload = await self._chat_json(
             [
                 {"role": "system", "content": self._fill_system_prompt(template)},
                 {"role": "user", "content": json.dumps(raw_answers, ensure_ascii=False)},
-            ]
+            ],
+            telegram_id=telegram_id,
         )
         try:
             result = FillResult.model_validate(payload)
@@ -305,6 +324,7 @@ class DeepSeekClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         read_seconds: float | None = None,
+        telegram_id: int | None = None,
     ) -> dict[str, Any]:
         if not self.settings.deepseek_api_keys_list:
             raise DeepSeekError("DEEPSEEK_API_KEYS не заполнен")
@@ -331,13 +351,14 @@ class DeepSeekClient:
         if max_tokens is not None:
             base["max_tokens"] = max_tokens
 
-        n_keys = len(self.settings.deepseek_api_keys_list)
+        ordered_keys = self._ordered_api_keys(self.settings.deepseek_api_keys_list, telegram_id)
+        n_keys = len(ordered_keys)
         # Ответ уже пришёл (HTTP 200), но модель порвала/испачкала JSON — повторяем тем же ключом.
         same_key_decode_attempts = 3
         same_key_read_retries = 3
 
         for key_attempt in range(1, n_keys + 1):
-            api_key = next(self._keys)
+            api_key = ordered_keys[key_attempt - 1]
             outbound = dict(base)
             bail_http = False
             decode_problem_tags: list[str] = []
@@ -777,7 +798,7 @@ class DeepSeekClient:
             'Верни JSON: {"document_title":"…","questions":["…"],"clarification_needed":false,"extracted_facts_summary":""}'
         )
 
-    async def generate_document_questions(self, request_text: str) -> DocumentQuestionsResult:
+    async def generate_document_questions(self, request_text: str, *, telegram_id: int | None = None) -> DocumentQuestionsResult:
         rt = request_text.strip()
         user_block = (
             "Ниже — единственный источник фактов о задаче пользователя. "
@@ -792,6 +813,7 @@ class DeepSeekClient:
             ],
             temperature=0.12,
             max_tokens=1800,
+            telegram_id=telegram_id,
         )
         try:
             raw = DocumentQuestionsResult.model_validate(payload)
@@ -815,7 +837,9 @@ class DeepSeekClient:
             "Верни строго JSON: {\"ready\": true, \"reason_short\": \"\", \"follow_up_questions\": []}"
         )
 
-    async def assess_document_readiness(self, request_text: str, qa_transcript: str) -> DocumentReadinessResult:
+    async def assess_document_readiness(
+        self, request_text: str, qa_transcript: str, *, telegram_id: int | None = None
+    ) -> DocumentReadinessResult:
         block = (
             "Исходный запрос пользователя:\n"
             f"{request_text.strip()}\n\n"
@@ -829,6 +853,7 @@ class DeepSeekClient:
             ],
             temperature=0.06,
             max_tokens=2400,
+            telegram_id=telegram_id,
         )
         try:
             raw = DocumentReadinessResult.model_validate(payload)
@@ -953,7 +978,9 @@ class DeepSeekClient:
             f"Собранные уточнения и ответы:\n{details_text.strip()}"
         )
 
-    async def generate_dynamic_document(self, request_text: str, details_text: str) -> DynamicDocumentResult:
+    async def generate_dynamic_document(
+        self, request_text: str, details_text: str, *, telegram_id: int | None = None
+    ) -> DynamicDocumentResult:
         from datetime import datetime
         current_date = datetime.now().strftime("%d.%m.%Y")
         kind = self._infer_dynamic_document_kind(request_text, details_text)
@@ -970,6 +997,7 @@ class DeepSeekClient:
             temperature=0.14,
             max_tokens=8192,
             read_seconds=float(max(120, self.settings.deepseek_generation_timeout_seconds)),
+            telegram_id=telegram_id,
         )
         payload_norm = normalize_dynamic_document_payload(payload) if isinstance(payload, dict) else {}
         try:
