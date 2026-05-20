@@ -96,6 +96,32 @@ class DynamicDocumentResult(BaseModel):
     date_and_signature: str = ""
     instruction: str = ""
 
+    @staticmethod
+    def _normalize_text_scalar(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return "\n".join(str(v).strip() for v in value if str(v).strip())
+        return str(value).strip()
+
+    @field_validator("title", "subtitle", "date_and_signature", "instruction", mode="before")
+    @classmethod
+    def coerce_text_fields(cls, value: object) -> str:
+        """Модель иногда кладёт одну строку в массив — иначе падает string_type."""
+        return cls._normalize_text_scalar(value)
+
+    @field_validator("header", "body", "requests", "attachments", mode="before")
+    @classmethod
+    def coerce_line_lists(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(x).strip() for x in value if str(x).strip()]
+        if isinstance(value, str):
+            t = value.strip()
+            return [t] if t else []
+        return []
+
 
 class DocumentReadinessResult(BaseModel):
     """Проверка: достаточно ли ответов для генерации черновика документа."""

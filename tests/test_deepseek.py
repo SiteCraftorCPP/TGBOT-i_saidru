@@ -77,6 +77,21 @@ def test_backfill_contract_adds_lease_checklist_when_thin() -> None:
     assert "залог" in text or "аренд" in text
 
 
+def test_dynamic_document_result_coerces_list_to_string_fields() -> None:
+    from app.schemas.ai import DynamicDocumentResult
+
+    raw = DynamicDocumentResult.model_validate(
+        {
+            "title": "Тест",
+            "date_and_signature": ["Дата: ________", "________________ (подпись)"],
+            "body": "один абзац",
+        }
+    )
+    assert "______" in raw.date_and_signature
+    assert "\n" in raw.date_and_signature
+    assert raw.body == ["один абзац"]
+
+
 def test_infer_dynamic_doc_kind_lease_is_contract() -> None:
     c = _ds()
     k = c._infer_dynamic_document_kind(
