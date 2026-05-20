@@ -17,6 +17,7 @@ from app.schemas.ai import (
     DynamicDocumentResult,
     FillResult,
     TemplateMeta,
+    normalize_dynamic_document_payload,
 )
 
 
@@ -889,6 +890,8 @@ class DeepSeekClient:
             "...» без выдуманных номеров.\n"
             "Структура JSON строго: header (массив строк), title, subtitle, body (абзацы по смыслу), requests, attachments, date_and_signature, instruction. "
             "Пустые разделы — [] или \"\".\n"
+            "Типы полей соблюдай строго: title, subtitle, date_and_signature, instruction — всегда одна строка текста (никогда массив и никогда объект); "
+            "header, body, requests, attachments — всегда массив строк (каждый элемент одна строка), без вложенных массивов и без объектов в массивах.\n"
         )
 
         by_kind = {
@@ -968,8 +971,9 @@ class DeepSeekClient:
             max_tokens=8192,
             read_seconds=float(max(120, self.settings.deepseek_generation_timeout_seconds)),
         )
+        payload_norm = normalize_dynamic_document_payload(payload) if isinstance(payload, dict) else {}
         try:
-            raw = DynamicDocumentResult.model_validate(payload)
+            raw = DynamicDocumentResult.model_validate(payload_norm)
         except ValidationError as exc:
             raise DeepSeekError(f"DeepSeek вернул некорректный документ: {exc}") from exc
         return self._sanitize_dynamic_document_output(kind, raw, request_text)

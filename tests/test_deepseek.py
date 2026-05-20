@@ -77,6 +77,23 @@ def test_backfill_contract_adds_lease_checklist_when_thin() -> None:
     assert "залог" in text or "аренд" in text
 
 
+def test_dynamic_document_normalizes_nested_and_dict_shapes() -> None:
+    from app.schemas.ai import DynamicDocumentResult
+
+    raw = DynamicDocumentResult.model_validate(
+        {
+            "title": {"ru": "Тест"},
+            "body": [["абзац в массиве"], {"1": "первый", "2": "второй"}],
+            "date_and_signature": [{"строка": "Дата ______"}],
+            "header": {"0": "Верх"},
+        }
+    )
+    assert isinstance(raw.title, str)
+    assert len(raw.body) >= 2
+    assert isinstance(raw.date_and_signature, str)
+    assert len(raw.header) >= 1
+
+
 def test_dynamic_document_result_coerces_list_to_string_fields() -> None:
     from app.schemas.ai import DynamicDocumentResult
 
