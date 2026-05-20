@@ -31,8 +31,8 @@ class Settings(BaseSettings):
 
     telegram_proxy_url: str | None = Field(default=None, alias="TELEGRAM_PROXY_URL")
     payments_enabled: bool = Field(default=False, alias="PAYMENTS_ENABLED")
-    document_price_rub: int = Field(default=100, alias="DOCUMENT_PRICE_RUB")
-    subscription_price_rub: int = Field(default=499, alias="SUBSCRIPTION_PRICE_RUB")
+    document_price_rub: int = Field(default=150, alias="DOCUMENT_PRICE_RUB")
+    subscription_price_rub: int = Field(default=999, alias="SUBSCRIPTION_PRICE_RUB")
     subscription_includes_unlimited_docs: bool = Field(
         default=False,
         alias="SUBSCRIPTION_INCLUDES_UNLIMITED_DOCS",
