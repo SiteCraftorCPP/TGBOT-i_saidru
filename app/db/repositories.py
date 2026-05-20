@@ -37,6 +37,11 @@ class UserRepository:
         await self.session.execute(delete(User).where(User.telegram_id == telegram_id))
         await self.session.flush()
 
+    async def count_all(self) -> int:
+        """Сколько строк в users (все, кто хотя бы раз зашёл через /start или сценарий с созданием пользователя)."""
+        r = await self.session.execute(select(func.count()).select_from(User))
+        return int(r.scalar_one() or 0)
+
     async def extend_subscription_month(self, user: User) -> None:
         """+30 календарных дней от max(сейчас, subscription_until) — продление суммируется до истечения."""
         from datetime import datetime, timedelta, timezone

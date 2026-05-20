@@ -38,6 +38,11 @@ async def main() -> None:
         settings.deepseek_generation_timeout_seconds,
         settings.deepseek_base_url.rstrip("/"),
     )
+    if not (settings.admin_ids or "").strip():
+        logger.warning(
+            "ADMIN_IDS пуст в конфиге — команда /admin ответит «Нет доступа» всем. "
+            "Укажите числовые Telegram user id через запятую и перезапустите сервис."
+        )
 
     if settings.payments_enabled:
         if not settings.telegram_native_payment_token_configured() and not settings.yookassa_configured():

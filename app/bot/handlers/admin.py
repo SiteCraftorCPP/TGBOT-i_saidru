@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.bot.keyboards import ADMIN_BUYERS_PREFIX, admin_buyers_keyboard
 from app.core.config import Settings
-from app.db.repositories import PaidBuyerRow, PaymentRepository
+from app.db.repositories import PaidBuyerRow, PaymentRepository, UserRepository
 
 PAGE_SIZE = 8
 
@@ -37,6 +37,7 @@ def _build_admin_message(
     *,
     rows: list[PaidBuyerRow],
     list_total: int,
+    users_total: int,
     payments_doc: int,
     payments_sub: int,
     page: int,
@@ -44,6 +45,7 @@ def _build_admin_message(
 ) -> str:
     lines = [
         "Панель администратора 📊",
+        f"Пользователей в базе (записей users): {users_total}",
         "Ниже — число успешных транзакций (статус paid в базе):",
         f" • оплат за документы: {payments_doc}",
         f" • оплат подписки: {payments_sub}",
@@ -80,6 +82,8 @@ async def cmd_admin(
         return
 
     async with session_factory() as session:
+        users_repo = UserRepository(session)
+        users_total = await users_repo.count_all()
         pays = PaymentRepository(session)
         doc_n, sub_n = await pays.count_completed_by_kind()
         rows, total = await pays.list_buyers_who_paid(offset=0, limit=PAGE_SIZE)
@@ -87,6 +91,7 @@ async def cmd_admin(
     text = _build_admin_message(
         rows=rows,
         list_total=total,
+        users_total=users_total,
         payments_doc=doc_n,
         payments_sub=sub_n,
         page=0,
@@ -116,6 +121,8 @@ async def admin_buyers_page(
     page_req = max(0, page_req)
 
     async with session_factory() as session:
+        users_repo = UserRepository(session)
+        users_total = await users_repo.count_all()
         pays = PaymentRepository(session)
         doc_n, sub_n = await pays.count_completed_by_kind()
         rows, total = await pays.list_buyers_who_paid(offset=page_req * PAGE_SIZE, limit=PAGE_SIZE)
@@ -124,6 +131,8 @@ async def admin_buyers_page(
     if total and page_req > max_page:
         page_req = max_page
         async with session_factory() as session:
+            users_repo = UserRepository(session)
+            users_total = await users_repo.count_all()
             pays = PaymentRepository(session)
             doc_n, sub_n = await pays.count_completed_by_kind()
             rows, total = await pays.list_buyers_who_paid(offset=page_req * PAGE_SIZE, limit=PAGE_SIZE)
@@ -131,6 +140,7 @@ async def admin_buyers_page(
     text = _build_admin_message(
         rows=rows,
         list_total=total,
+        users_total=users_total,
         payments_doc=doc_n,
         payments_sub=sub_n,
         page=page_req,
